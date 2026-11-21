@@ -654,7 +654,8 @@
 
   function autoRefreshControl(onRefresh) {
     const OPTS = [0, 60, 300, 600];
-    let sec = Number(localStorage.getItem('polo_refresh'));
+    const rawSec = localStorage.getItem('polo_refresh');
+    let sec = rawSec === null ? 300 : Number(rawSec);
     if (!OPTS.includes(sec)) sec = 300;
     let left = sec;
     const label = h('span');
@@ -1014,7 +1015,7 @@
     const count = h('span', { class: 'muted small' });
     append(main, h('div', { class: 'card' },
       h('div', { class: 'card-head' }, h('div', { class: 'row wrap' }, h('h2', { class: 'card-title' }, icon('ticket'), '邀请码'), count), createBtn),
-      h('div', { class: 'table-wrap' }, h('table', { class: 'table responsive' },
+      h('div', { class: 'table-wrap' }, h('table', { class: 'table responsive wide' },
         h('thead', {}, h('tr', {}, ['邀请码', '备注', '使用次数', '注册后', '默认可见账号', '有效期', '创建', '状态 / 操作'].map((t) => h('th', { text: t })))), tbody))));
 
     function showCode(code) {
