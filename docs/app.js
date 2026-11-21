@@ -29,7 +29,7 @@
     append(n, kids);
     return n;
   }
-  function append(n, kids) {
+  function append(n, ...kids) {
     for (const k of kids.flat(Infinity)) {
       if (k === null || k === undefined || k === false) continue;
       n.append(k instanceof Node ? k : document.createTextNode(String(k)));
