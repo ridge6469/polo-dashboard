@@ -571,7 +571,7 @@
       if (left) return h('span', { class: 'u-reset', title: '重置于 ' + fmtTime(q.reset_at) }, icon('clock', 'icon icon-sm'), left + '后重置');
       return (q.used_pct || 0) > 0 ? h('span', { class: 'u-reset pending', title: '已过重置时间，等待后台刷新用量' }, '待刷新') : h('span', { class: 'u-reset' }, '已重置');
     }
-    if (resetText === '重置时间未知') return h('span', { class: 'u-reset' }, '重置时间未知');
+    if (resetText === '重置时间未知' && (q.used_pct || 0) > 0) return h('span', { class: 'u-reset' }, '重置时间未知');
     return null;
   }
   function usageBlock(r) {
@@ -700,7 +700,7 @@
     refreshBtn.addEventListener('click', () => { auto.reset(); load(); });
     const countText = h('span', { class: 'muted small' });
     const tbody = h('tbody', {}, Array.from({ length: 4 }, () => h('tr', {}, Array.from({ length: 7 }, () => h('td', {}, h('div', { class: 'skeleton sk-line' }))))));
-    const table = h('table', { class: 'table responsive' },
+    const table = h('table', { class: 'table responsive accounts' },
       h('thead', {}, h('tr', {}, ['账号', '状态', '额度窗口', '今日', '实时', '24 小时', '最近使用'].map((t) => h('th', { text: t })))), tbody);
     const ops = h('div', { class: 'ops' });
     append(main, notices, stats,
