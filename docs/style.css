@@ -3,6 +3,7 @@
   --ok: #16a34a; --warn: #d97706; --bad: #dc2626; --primary: #2563eb;
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.5 -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
 h1 { font-size: 20px; margin: 0; }
 h2 { font-size: 16px; margin: 0 0 8px; }
