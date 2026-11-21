@@ -1,0 +1,16 @@
+# 凭据与本地配置
+.env
+.env.*
+*.key
+*.pem
+cookies*.json
+auth*.json
+
+# 数据快照与导出
+snapshot*.json
+data/
+*.csv
+
+# 依赖与构建产物
+node_modules/
+dist/
