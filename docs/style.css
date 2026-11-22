@@ -714,3 +714,18 @@ tr:hover .nick-btn { opacity: 1; }
   .toasts { left: 12px; right: 12px; }
   .toast { max-width: none; }
 }
+/* 上家结算 */
+.chip-ok { background: var(--ok-bg, rgba(16,185,129,.12)); color: var(--ok, #059669); }
+.until-row { gap: 10px; margin-bottom: 12px; align-items: center; }
+.until-row > .label { font-size: 13px; color: var(--muted); font-weight: 600; }
+.reach { padding: 14px 16px; border-radius: 14px; background: var(--grad-soft); margin: 12px 0 10px; }
+.reach small { font-size: 12px; color: var(--muted); }
+.reach-t { font-size: 24px; font-weight: 750; letter-spacing: .3px; font-variant-numeric: tabular-nums; margin: 2px 0 4px; color: var(--primary-text); }
+.split-table .grp-row td { background: var(--surface-2); font-weight: 600; }
+.split-table td:first-child { min-width: 120px; }
+@media (max-width: 760px) { .reach-t { font-size: 19px; } .split-table td:nth-child(2) { display: none; } .split-table th:nth-child(2) { display: none; } }
+.stats-scope { gap: 10px; align-items: center; margin-top: 10px; }
+.stats-scope > .label { font-size: 12.5px; color: var(--muted); font-weight: 600; }
+.stats-scope select.on { border-color: var(--primary); color: var(--primary-text); font-weight: 600; }
+.up-sum { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: baseline; margin-top: 12px; padding: 10px 14px; border-radius: 12px; background: var(--primary-soft); font-size: 13px; }
+.up-sum a { margin-left: auto; font-weight: 600; }

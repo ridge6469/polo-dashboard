@@ -1259,6 +1259,10 @@
     rate_required: '选了 USDT 付款要填汇率',
     rate_unavailable: '汇率暂时取不到，请手动填写',
     range_too_long: '日期范围太长（最多 400 天）',
+    not_reached: '额度还没达到这个数',
+    below_settled: '累计额度不能小于已经结算的累计额度',
+    bad_time: '时间不对：要在上一个结算点之后、现在前 2 分钟之前',
+    up_start_locked: '已经有结算点了，起点不能再改',
     too_many_jobs: '后台任务太多，请稍后再试',
     job_not_found: '任务已过期，请重试',
     bad_request: '输入不正确',
@@ -1297,7 +1301,7 @@
     for (;;) {
       const j = await api('GET', '/admin/settle/job/' + jid);
       if (j.status === 'done') return j.result;
-      if (j.status === 'error') throw new ApiError(502, j.error || 'query_failed');
+      if (j.status === 'error') throw new ApiError(502, j.error || 'query_failed', j.error_info || {});
       if (onTick) onTick(j.status, Math.round((Date.now() - t0) / 1000));
       if (Date.now() - t0 > 330000) throw new ApiError(504, 'query_timeout');
       await new Promise((r) => setTimeout(r, 1200));
@@ -1387,15 +1391,16 @@
   // ============================================================
   async function pageSettle(params) {
     if (params.get('tab') === 'daily') return go('#/admin/stats');
-    const tab = ['pending', 'history', 'settings'].includes(params.get('tab')) ? params.get('tab') : 'pending';
-    const { main } = appLayout({ active: '#/admin/settle', title: '结算', desc: '按成员结算：点谁的“结算”，就给谁结到现在' });
-    const tabs = h('div', { class: 'tabs' }, [['pending', '待结算', 'dollar'], ['history', '结算记录', 'log'], ['settings', '归属与设置', 'cog']]
+    const tab = ['pending', 'upstream', 'history', 'settings'].includes(params.get('tab')) ? params.get('tab') : 'pending';
+    const { main } = appLayout({ active: '#/admin/settle', title: '结算', desc: '上家给我结算、我给成员结算' });
+    const tabs = h('div', { class: 'tabs' }, [['pending', '成员待结算', 'dollar'], ['upstream', '上家结算', 'trend'], ['history', '成员结算记录', 'log'], ['settings', '归属与设置', 'cog']]
       .map(([k, l, ic]) => h('a', { class: 'btn btn-sm ' + (k === tab ? 'btn-primary' : 'btn-secondary'), href: '#/admin/settle?tab=' + k, style: { textDecoration: 'none' } }, icon(ic, 'icon icon-sm'), l)),
       h('a', { class: 'btn btn-sm btn-ghost', href: '#/admin/stats', style: { textDecoration: 'none' } }, icon('chart', 'icon icon-sm'), '统计看板'));
     const body = h('div', {}, h('div', { class: 'stats' }, skeletonStats(4)));
     append(main, tabs, body);
     try {
       if (tab === 'pending') await settlePending(body);
+      else if (tab === 'upstream') await settleUpstream(body);
       else if (tab === 'history') await settleHistory(body);
       else await settleSettings(body);
     } catch (e) { clear(body, emptyState(errText(e), 'warning')); }
@@ -1548,7 +1553,9 @@
         rate && L.member_cny ? h('div', { class: 'mc-usdt', text: `≈ ${usdtFmt(r2(L.member_cny / rate.rate))}` }) : null),
       lineRecovery(L),
     ] : [h('div', { class: 'loading-box small' }, icon('refresh', 'icon icon-sm spin'), h('span', { text: '预估更新中；点“结算”会直接精确查询' }))];
+    const up = (st.up_points || [])[0];
     const chips = [unpaid ? h('span', { class: 'chip chip-warn', text: `还有 ${cny(unpaid)} 没付` }) : null,
+      up && m.start !== null && up.end_at >= m.start ? h('span', { class: 'chip chip-blue', title: '点“结算”时可以选只结算到这个上家结算点', text: `上家已结到 ${fmtSec(up.end_at).slice(5, 16)}` }) : null,
       L.status !== 'active' ? h('span', { class: 'chip', text: '已停用' }) : null,
       L.adjust_usd ? h('span', { class: 'chip', text: `调整 ${usd(L.adjust_usd)}` }) : null,
       m.closed_unsettled ? h('span', { class: 'chip', text: `${m.closed_unsettled} 个转走的号还有没结的部分` }) : null].filter(Boolean);
@@ -1567,14 +1574,20 @@
 
   function settlePreview(m, st, done) {
     const who = uname(m.user_id, m.line.username);
-    const status = h('div', { class: 'loading-box' }, icon('refresh', 'icon spin'), h('span', { text: `正在向 Polo 精确查询 ${who} 的额度…` }));
-    const box = h('div', {}, status);
-    let jobId = null, res = null, pay = null;
+    const box = h('div');
+    let jobId = null, res = null, pay = null, seq = 0, until = null;
     const note = h('input', { class: 'input', maxlength: '200', placeholder: '结算备注（可选，只有管理员能看到）' });
     const markPaid = h('input', { type: 'checkbox' });
     const paidNote = h('input', { class: 'input input-sm', maxlength: '200', placeholder: '付款备注：例如 微信 / 支付宝 / 交易哈希（可选）', hidden: true });
     markPaid.addEventListener('change', () => { paidNote.hidden = !markPaid.checked; });
-    modal({ title: `结算 · ${who}`, body: box, wide: true, actions: [{ label: '取消' }, { label: '确认结算', kind: 'btn-primary', onClick: async () => {
+    // 结算到：现在，或某个上家结算点（上家结完账再给成员结到同一秒）
+    const ups = (st.up_points || []).filter((p) => m.start !== null && p.end_at >= m.start).slice(0, 4);
+    const untilSeg = h('div', { class: 'seg seg-wrap' });
+    const paintUntil = () => clear(untilSeg, [[null, '现在（前 2 分钟）'], ...ups.map((p) => [p.end_at, `上家结算点 #${p.id}（${fmtSec(p.end_at).slice(5)}）`])]
+      .map(([v, l]) => h('button', { type: 'button', class: until === v ? 'on' : '', onclick: () => { if (until !== v) { until = v; paintUntil(); run(); } } }, l)));
+    paintUntil();
+    const head = ups.length ? h('div', { class: 'row wrap until-row' }, h('span', { class: 'label', text: '结算到' }), untilSeg) : null;
+    modal({ title: `结算 · ${who}`, body: h('div', {}, head, box), wide: true, actions: [{ label: '取消' }, { label: '确认结算', kind: 'btn-primary', onClick: async () => {
       if (!res) return false;
       const p = pay.get();
       if (!p) { toast('请填写 USDT 汇率', 'bad'); return false; }
@@ -1592,15 +1605,22 @@
         return false;
       }
     } }] });
-    (async () => {
+    async function run() {
+      const my = ++seq;
+      res = null;
+      const status = h('div', { class: 'loading-box' }, icon('refresh', 'icon spin'), h('span', { text: `正在向 Polo 精确查询 ${who} 的额度…` }));
+      clear(box, status);
       try {
-        const r = await api('POST', '/admin/settle/preview', { user_id: m.user_id }); jobId = r.job_id;
-        res = await pollJob(jobId, (s, sec) => { status.lastChild.textContent = (s === 'queued' ? '排队中' : `正在向 Polo 精确查询 ${who} 的额度`) + `… ${sec} 秒`; });
+        const r = await api('POST', '/admin/settle/preview', until ? { user_id: m.user_id, until } : { user_id: m.user_id });
+        const out = await pollJob(r.job_id, (s, sec) => { status.lastChild.textContent = (s === 'queued' ? '排队中' : `正在向 Polo 精确查询 ${who} 的额度`) + `… ${sec} 秒`; });
+        if (my !== seq) return;
+        jobId = r.job_id; res = out;
         const L = res.line;
         pay = payPicker(res.rates, () => L.member_cny);
         const step = (label, val, cls, sub) => h('div', { class: 'calc-row' + (cls ? ' ' + cls : '') }, h('div', {}, h('span', { text: label }), sub ? h('small', { text: sub }) : null), h('b', { text: val }));
         clear(box,
-          h('div', { class: 'notice n-info' }, icon('clock'), h('span', {}, '结算截止 ', h('b', { text: fmtSec(res.cutoff) }), `（点击时间前 2 分钟，北京时间）。确认后 ${who} 名下每个号的结算点都写到这一秒，下次从下一秒开始。`)),
+          h('div', { class: 'notice n-info' }, icon('clock'), h('span', {}, '结算截止 ', h('b', { text: fmtSec(res.cutoff) }),
+            until ? `（上家结算点，北京时间）。确认后 ${who} 名下每个号的结算点都写到这一秒，之后的额度留到下次。` : `（点击时间前 2 分钟，北京时间）。确认后 ${who} 名下每个号的结算点都写到这一秒，下次从下一秒开始。`)),
           windowsTable(res.items, acctMap(st.accounts)),
           res.unmatched && res.unmatched.length ? h('div', { class: 'notice n-warn', style: { marginTop: '10px' } }, icon('warning'), h('span', { text: `注意：有 ${res.unmatched.length} 个 Polo 账号没对应到邮箱，不计入任何成员。` })) : null,
           h('div', { class: 'calc' },
@@ -1612,10 +1632,12 @@
           pay.el,
           h('label', { class: 'check', style: { margin: '12px 0 6px' } }, markPaid, h('span', { text: '已经付过款了，直接标记为“已付款”' })),
           paidNote, h('div', { style: { marginTop: '8px' } }, note),
-          h('p', { class: 'hint', text: '预览 30 分钟内有效。点错了可以在“结算记录”里撤销这位成员最近一张（未付款时），结算点会退回原处。' }));
-      } catch (e) { clear(box, h('div', { class: 'notice n-bad' }, icon('warning'), h('span', { text: errText(e) }))); }
-    })();
+          h('p', { class: 'hint', text: '预览 30 分钟内有效。点错了可以在“成员结算记录”里撤销这位成员最近一张（未付款时），结算点会退回原处。' }));
+      } catch (e) { if (my === seq) clear(box, h('div', { class: 'notice n-bad' }, icon('warning'), h('span', { text: errText(e) }))); }
+    }
+    run();
   }
+
 
   function adjustmentsCard(st, reload) {
     const members = st.users.filter((u) => u.role === 'user');
@@ -1642,6 +1664,270 @@
             if (!(await confirmBox('删除调整项', `删除给 ${uname(a.user_id, a.username)} 的 ${usd(a.usd)}（${a.note}）？`, { danger: true, okText: '删除' }))) return;
             try { await api('POST', '/admin/settle/adjust-delete/' + a.id); reload(); } catch (e) { toast(errText(e), 'bad'); }
           } }, '删除'))))))) : h('div', { class: 'card-body muted small', text: '没有待结算的调整项。停机补偿、纠错等可以在这里添加。' }));
+  }
+
+  // ---------- 上家结算 ----------
+  const curFmt = (v, cur) => (cur === 'USDT' ? usdtFmt(v) : cny(v));
+  const MODE_CN = { amount: '按本次额度', cumulative: '按累计额度', time: '按时间' };
+  function covChip(c) {
+    if (!c) return null;
+    if (c.covered) return h('span', { class: 'chip chip-ok', text: '已给成员结清' });
+    return h('span', { class: 'chip chip-warn', text: c.never ? '还没给成员结算' : `给成员结到 ${fmtSec(c.settled_until).slice(5, 16)}` });
+  }
+  // 一段时间的额度拆分：我的号 / 各成员的号，每组列出账号
+  function splitTable(bd, info, cov) {
+    const groups = [{ owner: null, usd: bd.mine_usd }].concat(Object.entries(bd.members || {}).sort((a, b) => b[1].usd - a[1].usd).map(([u, m]) => ({ owner: Number(u), usd: m.usd })));
+    const tbody = h('tbody');
+    for (const g of groups) {
+      const rows = (bd.accounts || []).filter((x) => (x.owner === undefined ? null : x.owner) === g.owner);
+      if (!rows.length && !g.usd) continue;
+      tbody.append(h('tr', { class: 'grp-row' }, h('td', { colspan: '3' }, h('div', { class: 'row wrap', style: { gap: '8px' } },
+        g.owner === null ? h('b', { text: '我的号' }) : userName2(g.owner), g.owner !== null && cov ? covChip(cov[String(g.owner)]) : null)),
+        h('td', { class: 'num money-strong', text: usd(g.usd) }), h('td', { class: 'num faint', text: bd.usd ? ((g.usd / bd.usd) * 100).toFixed(1) + '%' : '' })));
+      for (const x of rows) {
+        const part = x.start !== bd.start || x.end !== bd.end;
+        tbody.append(h('tr', {}, h('td', {}, acctLabel(x.key, info, x.name), x.unmatched ? h('span', { class: 'chip chip-warn', text: '没对应到邮箱' }) : null),
+          h('td', { class: 'small nowrap faint' }, part ? [h('div', { text: fmtSec(x.start).slice(5) }), h('div', { text: '→ ' + fmtSec(x.end).slice(5) })] : '整段'),
+          h('td', { class: 'num' }, compact(x.requests)), h('td', { class: 'num', title: usd4(x.usd) }, usd(x.usd)), h('td')));
+      }
+    }
+    if (!tbody.children.length) return h('div', { class: 'muted small', text: '这段时间没有额度' });
+    return h('div', { class: 'charges-wrap' }, h('table', { class: 'mini-table split-table' },
+      h('thead', {}, h('tr', {}, ['账号', '归属区间', '请求', '额度', '占比'].map((t) => h('th', { text: t })))), tbody));
+  }
+
+  async function settleUpstream(body) {
+    const [st] = await Promise.all([api('GET', '/admin/settle/up/state'), loadECharts().catch(() => null)]);
+    rememberUsers(st.users);
+    const info = acctMap(st.accounts);
+    const reload = () => settleUpstream(body);
+    const set = st.settings, sd = st.settled, p = st.pending;
+    const act = st.points.filter((x) => x.status === 'active');
+    const last = act[0] || null;
+    const est = (u) => (set.up_price ? curFmt(r2(u * set.up_price), set.up_currency) : null);
+    const notes = [];
+    if (!p) notes.push(['n-info', 'refresh', '待结算数据正在更新（约半分钟），稍后点“刷新”。']);
+    if (p && p.unmatched && p.unmatched.length) notes.push(['n-warn', 'warning', `有 ${p.unmatched.length} 个 Polo 账号没对应到邮箱（${p.unmatched.map((x) => `${x.name} ${usd(x.usd)}`).join('、')}），算在“我的号”里。`]);
+    const recvTxt = Object.entries(sd.received).map(([k, v]) => curFmt(v, k)).join(' + ');
+    const stats = h('div', { class: 'stats' },
+      statCard('待结算（上家）', p ? usd(p.usd) : '—', 'clock', 'warn', p ? `我的号 ${usd(p.mine_usd)} · 成员号 ${usd(p.members_usd)}${est(p.usd) ? ` · 预计 ${est(p.usd)}` : ''}` : '更新中'),
+      statCard('已结算（上家）', usd(sd.usd), 'check', 'ok', `${sd.count} 次 · 我的号 ${usd(sd.mine_usd)} · 成员号 ${usd(sd.members_usd)}`),
+      statCard('累计总额度', usd(sd.usd + (p ? p.usd : 0)), 'chart', 'blue', `从 ${fmtSec(set.up_start).slice(0, 16)} 起（所有成员 + 我的号）`),
+      statCard('已收款', recvTxt || '—', 'dollar', 'purple', last ? `上次结算点 ${fmtSec(last.end_at).slice(5, 16)}` : '还没有结算点'));
+    const addBtn = h('button', { class: 'btn btn-primary btn-sm', type: 'button', onclick: () => upstreamAddModal(st, info, reload) }, icon('plus', 'icon icon-sm'), '添加结算点');
+    const refBtn = h('button', { class: 'btn btn-secondary btn-sm', type: 'button' }, icon('refresh', 'icon icon-sm'), '刷新');
+    refBtn.addEventListener('click', async () => {
+      refBtn.disabled = true; clear(refBtn, icon('refresh', 'icon icon-sm spin'), '正在向 Polo 查询…');
+      try { const r = await api('POST', '/admin/settle/up/refresh'); await pollJob(r.job_id); toast('已刷新', 'ok'); await reload(); }
+      catch (e) { toast(errText(e), 'bad'); refBtn.disabled = false; clear(refBtn, icon('refresh', 'icon icon-sm'), '刷新'); }
+    });
+    const head = h('div', { class: 'card', style: { marginBottom: '16px' } }, h('div', { class: 'card-body period' },
+      h('div', {}, h('b', { text: '怎么用' }),
+        h('div', { class: 'hint', text: '上家按整个号池（所有成员的号 + 你自己的号）的总额度给你结算。收到钱后点“添加结算点”，输入这次结算了多少额度（或累计额度、或时间），系统会向 Polo 查出这个额度是在哪一秒达到的，结算点就记在那一秒（不是你录入的时间），下一段从下一秒开始。之后再到“成员待结算”给成员结算，可以选“结算到上家结算点”。' }),
+        h('div', { class: 'faint xs', style: { marginTop: '4px' }, text: p ? `待结算数字 ${ago(p.at)}查询，每 15 分钟自动更新${st.refreshing ? '，正在更新…' : ''}` : '' })),
+      h('div', { class: 'toolbar' }, refBtn, addBtn)));
+    // 图表
+    const el1 = h('div', { class: 'chart chart-lg' }), el2 = h('div', { class: 'chart' });
+    const charts = h('div', { class: 'chart-grid' },
+      h('div', { class: 'span-2' }, h('div', { class: 'card chart-card' }, h('div', { class: 'card-head' }, h('div', {}, h('h3', { class: 'card-title' }, icon('trend'), '累计额度与结算点'),
+        h('div', { class: 'faint xs', text: '曲线：整个号池的累计额度（按小时）；绿点：上家结算点（达成的那一秒）；橙色：待结算' }))), h('div', { class: 'card-body chart-body' }, el1))),
+      h('div', { class: 'span-2' }, h('div', { class: 'card chart-card' }, h('div', { class: 'card-head' }, h('div', {}, h('h3', { class: 'card-title' }, icon('cube'), '每段的构成'),
+        h('div', { class: 'faint xs', text: '每次上家结算里：我的号 / 各成员的号各占多少（最后一根是待结算）' }))), h('div', { class: 'card-body chart-body' }, el2))));
+    // 待结算
+    const pend = h('div', { class: 'card', style: { marginBottom: '16px' } },
+      h('div', { class: 'card-head' }, h('div', {}, h('h3', { class: 'card-title' }, icon('clock'), '待结算（上家）'),
+        p ? h('div', { class: 'faint xs', text: `${fmtSec(p.start)} → ${fmtSec(p.end)} · ${usd(p.usd)}（我的号 ${usd(p.mine_usd)} · 成员号 ${usd(p.members_usd)}）` }) : null)),
+      h('div', { class: 'card-body' }, p ? splitTable(p, info, p.coverage) : emptyState('更新中…', 'clock')));
+    // 结算点记录
+    const COLS = ['次', '区间（达成时间）', '额度', '我的号', '成员号', '收款', '给成员结算', ''];
+    const tbody = h('tbody');
+    st.points.forEach((x) => {
+      const voided = x.status !== 'active';
+      const idx = act.length - act.indexOf(x);
+      const bd = { usd: x.usd, mine_usd: x.mine_usd, members: x.detail.members, accounts: x.detail.accounts, start: x.start_at, end: x.end_at };
+      const d = x.detail;
+      const how = x.mode === 'time' ? `${MODE_CN.time}：${fmtSec(x.target)}` : `${MODE_CN[x.mode]} ${usd(x.target)}${d.diff !== null && d.diff !== undefined ? `（实际多 ${usd4(d.diff)}）` : ''}`;
+      const exp = h('tr', { class: 'exp-row', hidden: true }, h('td', { colspan: String(COLS.length) }, splitTable(bd, info, x.coverage),
+        h('div', { class: 'faint xs', style: { marginTop: '6px' }, text: `${how} · ${x.created_by || ''} 录入于 ${fmtTime(x.created_at)}${x.note ? ' · 备注：' + x.note : ''}${voided ? ` · ${x.voided_by || ''} 于 ${fmtTime(x.voided_at)} 撤销` : ''}` })));
+      const covs = Object.entries(x.coverage || {}).map(([u, c]) => h('span', { class: 'chip ' + (c.covered ? 'chip-ok' : 'chip-warn'), title: c.covered ? '已给成员结清这一段' : c.never ? '还没给成员结算' : `给成员结到 ${fmtSec(c.settled_until)}` }, (c.covered ? '✓ ' : '') + uname(Number(u))));
+      const ops = h('div', { class: 'row', style: { gap: '4px' } },
+        !voided ? h('button', { class: 'btn btn-ghost btn-xs', type: 'button', onclick: (e) => { e.stopPropagation(); upstreamEditModal(x, reload); } }, '改收款') : null,
+        !voided && last && x.id === last.id ? h('button', { class: 'btn btn-ghost btn-xs text-bad', type: 'button', onclick: async (e) => {
+          e.stopPropagation();
+          if (!(await confirmBox('撤销结算点', `撤销第 ${idx} 次上家结算（${usd(x.usd)}，达成于 ${fmtSec(x.end_at)}）？撤销后这段额度回到待结算。`, { danger: true, okText: '撤销' }))) return;
+          try { await api('POST', '/admin/settle/up/void/' + x.id); toast('已撤销', 'ok'); reload(); } catch (err) { toast(errText(err), 'bad'); }
+        } }, '撤销') : null);
+      const tr = h('tr', { class: 'click' + (voided ? ' voided-row' : ''), onclick: () => { exp.hidden = !exp.hidden; tr.classList.toggle('open', !exp.hidden); } },
+        h('td', { 'data-label': '' }, h('b', { text: voided ? '—' : `第 ${idx} 次` }), voided ? h('span', { class: 'badge b-gray', style: { marginLeft: '6px' }, text: '已撤销' }) : null, h('div', { class: 'faint xs', text: `#${x.id}` })),
+        h('td', { 'data-label': '区间', class: 'small nowrap' }, h('div', { class: 'faint', text: fmtSec(x.start_at) }), h('div', {}, '→ ', h('b', { text: fmtSec(x.end_at) }))),
+        h('td', { 'data-label': '额度', class: 'num money-strong', title: usd4(x.usd) }, usd(x.usd)),
+        h('td', { 'data-label': '我的号', class: 'num' }, usd(x.mine_usd)),
+        h('td', { 'data-label': '成员号', class: 'num' }, usd(x.members_usd)),
+        h('td', { 'data-label': '收款', class: 'num' }, x.received !== null ? [h('div', { text: curFmt(x.received, x.currency) }), h('div', { class: 'faint xs', text: `每 $1 = ${x.currency === 'USDT' ? '' : '¥'}${(x.received / x.usd).toFixed(3)}${x.currency === 'USDT' ? ' USDT' : ''}` })] : h('span', { class: 'faint', text: '—' })),
+        h('td', { 'data-label': '给成员结算' }, covs.length ? h('div', { class: 'chips' }, covs) : h('span', { class: 'faint small', text: voided ? '' : '都是我的号' })),
+        h('td', { 'data-label': '' }, ops));
+      append(tbody, tr, exp);
+    });
+    if (!st.points.length) tbody.append(h('tr', {}, h('td', { colspan: String(COLS.length) }, emptyState('还没有上家结算点。上家给你结算后点“添加结算点”。', 'trend'))));
+    const hist = h('div', { class: 'card', style: { marginBottom: '16px' } },
+      h('div', { class: 'card-head' }, h('div', {}, h('h3', { class: 'card-title' }, icon('log'), '已结算（上家结算点）'), h('div', { class: 'faint xs', text: '时间是额度达成的那一秒；点开看每个号的额度和录入信息' }))),
+      h('div', { class: 'table-wrap' }, h('table', { class: 'table responsive' }, h('thead', {}, h('tr', {}, COLS.map((t) => h('th', { text: t })))), tbody)));
+    // 设置
+    const startIn = h('input', { class: 'input mono', type: 'datetime-local', step: '1', value: toBjInput(set.up_start), disabled: set.locked });
+    const priceIn = h('input', { class: 'input', type: 'number', step: '0.0001', min: '0', value: set.up_price === null ? '' : set.up_price, placeholder: '可不填' });
+    const curSel = h('select', { class: 'select' }, ['CNY', 'USDT'].map((k) => h('option', { value: k, selected: set.up_currency === k, text: k === 'CNY' ? '人民币' : 'USDT' })));
+    const saveBtn = h('button', { class: 'btn btn-secondary btn-sm', type: 'button' }, '保存');
+    saveBtn.addEventListener('click', async () => {
+      const d = { up_price: priceIn.value === '' ? null : Number(priceIn.value), up_currency: curSel.value };
+      if (!set.locked) { d.up_start = fromBjInput(startIn.value); if (!d.up_start) return toast('请填写起点', 'bad'); }
+      try { await api('POST', '/admin/settle/up/settings', d); toast('已保存', 'ok'); reload(); } catch (e) { toast(errText(e), 'bad'); }
+    });
+    const sets = h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h3', { class: 'card-title' }, icon('cog'), '上家结算设置'), saveBtn),
+      h('div', { class: 'card-body grid-4' },
+        field('第一段从（北京时间）', startIn, set.locked ? '已经有结算点，不能再改' : '上家从什么时候开始算；Polo 在 11-20 之前没有数据'),
+        field('上家单价（每 $1 额度）', priceIn, '填了会估算待收款，并自动填收款金额'),
+        field('单价币种', curSel)));
+    clear(body, notes.map(([k, i, t]) => h('div', { class: 'notice ' + k }, icon(i), h('span', { text: t }))), stats, head, charts, pend, hist, sets);
+    const draw = () => { disposeCharts(); upstreamCharts(st, el1, el2); };
+    S.onTheme = draw;
+    draw();
+  }
+
+  function upstreamCharts(st, el1, el2) {
+    const E = window.echarts;
+    if (!E) { clear(el1, emptyState(ERR.chart_load_failed, 'warning')); return; }
+    const t = chartTheme(), p = st.pending;
+    const act = st.points.filter((x) => x.status === 'active').slice().reverse();
+    const nowS = Math.floor(Date.now() / 1000);
+    const endX = p ? p.end : nowS;
+    let cum = 0;
+    const line = [[st.settings.up_start * 1000, 0]];
+    for (const [hs, u] of st.hourly) { cum += u; const x = Math.min(hs + 3599, nowS); if (x < endX) line.push([x * 1000, r2(cum)]); }
+    if (p) line.push([p.end * 1000, r2(st.settled.usd + p.usd)]);
+    let c2 = 0;
+    const pts = act.map((x, i) => { c2 += x.usd; return { value: [x.end_at * 1000, r2(c2)], id: x.id, n: i + 1, usd: x.usd }; });
+    const lastEnd = act.length ? act[act.length - 1].end_at + 1 : st.settings.up_start;
+    const base = baseOpt(t);
+    const c1 = mkChart(el1);
+    c1.setOption(Object.assign(base, {
+      legend: { show: false }, grid: { left: 8, right: 18, top: 30, bottom: 8, containLabel: true },
+      tooltip: Object.assign(base.tooltip, { axisPointer: { type: 'line', lineStyle: { color: t.border } }, formatter: (ps) => {
+        ps = Array.isArray(ps) ? ps : [ps];
+        let html = `<div class="ct-title">${escHtml(fmtSec(ps[0].value[0] / 1000).slice(0, 16))}</div>`;
+        for (const q of ps) {
+          if (q.seriesType === 'scatter') html += `<div class="ct-row"><i class="ct-dot cd3"></i><span>第 ${q.data.n} 次结算点（本次 ${escHtml(usd(q.data.usd))}）</span><b>${escHtml(usd(q.value[1]))}</b></div>`;
+          else html += `<div class="ct-row"><i class="ct-dot cd7"></i><span>累计额度</span><b>${escHtml(usd(q.value[1]))}</b></div>`;
+        }
+        return html;
+      } }),
+      xAxis: { type: 'time', axisLine: { lineStyle: { color: t.border } }, axisTick: { show: false }, splitLine: { show: false }, axisLabel: { color: t.muted, fontSize: 11, hideOverlap: true } },
+      yAxis: axisY(t, shortUsd),
+      series: [
+        { name: '累计额度', type: 'line', data: line, showSymbol: false, smooth: 0.15, lineStyle: { width: 2.5, color: '#6366f1' }, itemStyle: { color: '#6366f1' },
+          areaStyle: { color: grad(E, 'rgba(99,102,241,.28)', 'rgba(99,102,241,0)') },
+          markArea: p && p.usd > 0 ? { silent: true, itemStyle: { color: 'rgba(245,158,11,.12)' }, label: { show: true, position: 'insideTop', color: '#d97706', fontWeight: 700, formatter: '待结算 ' + usd(p.usd) },
+            data: [[{ xAxis: lastEnd * 1000 }, { xAxis: p.end * 1000 }]] } : undefined,
+          markLine: pts.length ? { silent: true, symbol: 'none', lineStyle: { color: '#10b981', type: 'dashed', width: 1.2 }, label: { show: false }, data: pts.map((x) => ({ xAxis: x.value[0] })) } : undefined },
+        { name: '结算点', type: 'scatter', data: pts, symbolSize: 13, z: 10, itemStyle: { color: '#10b981', borderColor: t.card, borderWidth: 2 },
+          label: { show: true, position: 'top', color: t.text, fontWeight: 700, fontSize: 11, formatter: (q) => `第${q.data.n}次 ${shortUsd(q.data.usd)}` }, animationDelay: (i) => 600 + i * 120 },
+      ],
+    }));
+    // 每段的构成
+    const periods = act.map((x) => ({ label: `第${act.indexOf(x) + 1}次 ${fmtSec(x.end_at).slice(5, 10)}`, mine: x.mine_usd, members: x.detail.members, pend: false }));
+    if (p && p.usd > 0) periods.push({ label: '待结算', mine: p.mine_usd, members: p.members, pend: true });
+    if (!periods.length) { clear(el2, emptyState('还没有数据', 'cube')); return; }
+    const uids = [...new Set(periods.flatMap((q) => Object.keys(q.members || {})))];
+    const ser = (name, vals, i) => ({ name, type: 'bar', stack: 's', barMaxWidth: 46, emphasis: { focus: 'series' },
+      data: vals.map((v, k) => ({ value: r2(v), itemStyle: periods[k].pend ? { opacity: 0.55 } : undefined })),
+      itemStyle: { color: PALETTE[i % PALETTE.length], borderRadius: 0 }, animationDelay: (k) => k * 60 + i * 40 });
+    const c2c = mkChart(el2);
+    c2c.setOption(Object.assign(baseOpt(t), {
+      tooltip: Object.assign(baseOpt(t).tooltip, { formatter: axisTip({ _: usd }, { total: '合计' }) }),
+      xAxis: axisX(t, periods.map((q) => q.label)), yAxis: axisY(t, shortUsd),
+      series: [ser('我的号', periods.map((q) => q.mine), 0), ...uids.map((u, i) => ser(uname(Number(u)), periods.map((q) => ((q.members || {})[u] || {}).usd || 0), i + 1))],
+    }));
+  }
+
+  function upstreamAddModal(st, info, reload) {
+    const p = st.pending, sd = st.settled, set = st.settings;
+    let mode = 'amount', jobId = null, res = null, seq = 0;
+    const seg = h('div', { class: 'seg' });
+    const amt = h('input', { class: 'input mono', type: 'number', step: '0.01', min: '0', placeholder: p ? '例如 ' + Math.floor(p.usd) : '例如 3000' });
+    const cum = h('input', { class: 'input mono', type: 'number', step: '0.01', min: '0', placeholder: '例如 ' + Math.floor(sd.usd + (p ? p.usd : 0)) });
+    const tIn = h('input', { class: 'input mono', type: 'datetime-local', step: '1', value: toBjInput(Math.floor(Date.now() / 1000) - 300) });
+    const findBtn = h('button', { class: 'btn btn-primary btn-sm', type: 'button' }, icon('search', 'icon icon-sm'), '查找达成时间');
+    const inputBox = h('div'), resBox = h('div');
+    const recv = h('input', { class: 'input', type: 'number', step: '0.01', min: '0', placeholder: '可不填' });
+    const recvCur = h('select', { class: 'select', style: { width: 'auto' } }, ['CNY', 'USDT'].map((k) => h('option', { value: k, selected: set.up_currency === k, text: k === 'CNY' ? '人民币' : 'USDT' })));
+    const note = h('input', { class: 'input', maxlength: '200', placeholder: '备注（可选）' });
+    const reset = () => { seq++; res = null; jobId = null; clear(resBox); };
+    [amt, cum, tIn].forEach((x) => x.addEventListener('input', reset));
+    function paint() {
+      clear(seg, [['amount', '按本次额度'], ['cumulative', '按累计额度'], ['time', '按时间']].map(([k, l]) => h('button', { type: 'button', class: mode === k ? 'on' : '', onclick: () => { mode = k; reset(); paint(); } }, l)));
+      const hint = mode === 'amount' ? `从 ${fmtSec(st.next_start)} 开始累计。目前待结算 ${p ? usd(p.usd) : '—'}（截至 ${p ? fmtSec(p.end) : '—'}）。`
+        : mode === 'cumulative' ? `从 ${fmtSec(set.up_start)} 起的累计额度。已结算 ${usd(sd.usd)}，目前累计约 ${usd(sd.usd + (p ? p.usd : 0))}。`
+          : `在 ${fmtSec(st.next_start)} 之后、现在前 2 分钟之前（北京时间，精确到秒）。`;
+      const label = mode === 'amount' ? '上家这次结算了多少额度（美元）' : mode === 'cumulative' ? '上家累计结算到多少额度（美元）' : '结算到哪个时间';
+      clear(inputBox, field(label, h('div', { class: 'row', style: { gap: '8px' } }, mode === 'amount' ? amt : mode === 'cumulative' ? cum : tIn, findBtn), hint));
+    }
+    paint();
+    findBtn.addEventListener('click', async () => {
+      let value;
+      if (mode === 'time') { value = fromBjInput(tIn.value); if (!value) { toast('请填写时间', 'bad'); return; } }
+      else { value = Number((mode === 'amount' ? amt : cum).value); if (!(value > 0)) { toast('请填写额度', 'bad'); return; } }
+      const my = ++seq; res = null; findBtn.disabled = true;
+      const status = h('div', { class: 'loading-box' }, icon('refresh', 'icon spin'), h('span', { text: '正在向 Polo 查找达成的那一秒…' }));
+      clear(resBox, status);
+      try {
+        const r = await api('POST', '/admin/settle/up/find', { mode, value });
+        const out = await pollJob(r.job_id, (s, sec) => { status.lastChild.textContent = (s === 'queued' ? '排队中' : '正在向 Polo 查找达成的那一秒（按天 → 小时 → 分钟 → 秒）') + `… ${sec} 秒`; });
+        if (my !== seq) return;
+        jobId = r.job_id; res = out;
+        if (set.up_price && recv.value === '') { recv.value = r2(res.usd * set.up_price); recvCur.value = set.up_currency; }
+        const diff = res.diff !== null && res.diff !== undefined ? `（目标 ${usd4(res.need)}，实际多 ${usd4(res.diff)}，是跨过目标的那一条请求）` : '';
+        const box = h('div', { hidden: true }, splitTable(res, info, null));
+        const lbl = h('span', { text: '看每个号的额度' });
+        clear(resBox,
+          h('div', { class: 'reach' }, h('small', { text: mode === 'time' ? '结算到（北京时间）' : '达成时间（北京时间，精确到秒）' }),
+            h('div', { class: 'reach-t', text: fmtSec(res.end) }),
+            h('div', { class: 'muted small', text: `这一段：${fmtSec(res.start)} → ${fmtSec(res.end)}，共 ${usd4(res.usd)}${diff}` })),
+          h('div', { class: 'sum-chips' },
+            h('div', {}, h('small', { text: '这一段额度' }), h('b', { class: 'money-strong', text: usd(res.usd) })),
+            h('div', {}, h('small', { text: '其中我的号' }), h('b', { text: usd(res.mine_usd) })),
+            h('div', {}, h('small', { text: '其中成员号' }), h('b', { text: usd(res.members_usd) })),
+            h('div', {}, h('small', { text: '累计到这里' }), h('b', { text: usd(res.cumulative_before + res.usd) }))),
+          h('div', { style: { marginTop: '8px' } }, h('button', { class: 'btn btn-ghost btn-xs', type: 'button', onclick: () => { box.hidden = !box.hidden; lbl.textContent = box.hidden ? '看每个号的额度' : '收起'; } }, icon('down', 'icon icon-sm'), lbl), box));
+      } catch (e) {
+        if (my !== seq) return;
+        let msg = errText(e);
+        if (e.code === 'not_reached' && e.body && e.body.total !== undefined) msg = `还没达到：从 ${fmtSec(st.next_start)} 到 ${fmtSec(e.body.cutoff)} 一共只有 ${usd(e.body.total)}。`;
+        if (e.code === 'below_settled' && e.body && e.body.settled !== undefined) msg += `（已结算累计 ${usd(e.body.settled)}）`;
+        clear(resBox, h('div', { class: 'notice n-bad' }, icon('warning'), h('span', { text: msg })));
+      } finally { findBtn.disabled = false; }
+    });
+    modal({ title: '添加上家结算点', wide: true,
+      body: h('div', {}, h('div', { class: 'row wrap until-row' }, h('span', { class: 'label', text: '怎么算' }), seg), inputBox, resBox,
+        h('div', { class: 'grid-half', style: { marginTop: '14px' } }, field('上家付了多少（可不填）', h('div', { class: 'row', style: { gap: '8px' } }, recv, recvCur)), field('备注', note)),
+        h('p', { class: 'hint', text: '先点“查找达成时间”，确认无误再添加。结算点记在额度达成的那一秒；点错了可以撤销最近一个。' })),
+      actions: [{ label: '取消' }, { label: '确认添加', kind: 'btn-primary', onClick: async () => {
+        if (!res) { toast('先点“查找达成时间”', 'bad'); return false; }
+        try {
+          const r = await api('POST', '/admin/settle/up/commit', { job_id: jobId, received: recv.value === '' ? null : Number(recv.value), currency: recvCur.value, note: note.value });
+          toast(`已添加结算点：${usd(r.usd)}，达成于 ${fmtSec(r.end_at)}`, 'ok'); reload();
+        } catch (e) { toast(errText(e), 'bad'); if (['stale_preview', 'preview_expired'].includes(e.code)) { reload(); return; } return false; }
+      } }] });
+  }
+
+  function upstreamEditModal(x, reload) {
+    const recv = h('input', { class: 'input', type: 'number', step: '0.01', min: '0', value: x.received === null ? '' : x.received, placeholder: '可不填' });
+    const cur = h('select', { class: 'select', style: { width: 'auto' } }, ['CNY', 'USDT'].map((k) => h('option', { value: k, selected: (x.currency || 'CNY') === k, text: k === 'CNY' ? '人民币' : 'USDT' })));
+    const note = h('input', { class: 'input', maxlength: '200', value: x.note || '' });
+    modal({ title: `改收款 · ${usd(x.usd)}（达成于 ${fmtSec(x.end_at)}）`,
+      body: h('div', {}, field('上家付了多少', h('div', { class: 'row', style: { gap: '8px' } }, recv, cur)), field('备注', note), h('p', { class: 'hint', text: '时间和额度来自 Polo，不能手改；要改就撤销后重新添加。' })),
+      actions: [{ label: '取消' }, { label: '保存', kind: 'btn-primary', onClick: async () => {
+        try { await api('POST', '/admin/settle/up/edit/' + x.id, { received: recv.value === '' ? null : Number(recv.value), currency: cur.value, note: note.value }); toast('已保存', 'ok'); reload(); }
+        catch (e) { toast(errText(e), 'bad'); return false; }
+      } }] });
   }
 
   // ---------- 结算记录 ----------
@@ -2151,16 +2437,24 @@
     const { main } = appLayout({ active: '#/admin/stats', title: '统计看板', desc: '每个账号每天跑了多少额度、带来多少收入和利润' });
     let preset = localStorage.getItem('polo_stats_preset') || 'month';
     let range = preset === 'custom' ? (JSON.parse(localStorage.getItem('polo_stats_custom') || 'null') || presetRange('month')) : presetRange(preset, localStorage.getItem('polo_stats_min'));
-    let ownerF = 'all', trendMode = localStorage.getItem('polo_stats_trend') || 'account', pieMode = 'account', sortKey = 'usd', sortDir = -1, data = null, seq = 0;
+    let ownerF = ['all', 'own', 'members'].includes(localStorage.getItem('polo_stats_scope')) ? localStorage.getItem('polo_stats_scope') : 'all', trendMode = localStorage.getItem('polo_stats_trend') || 'account', pieMode = 'account', sortKey = 'usd', sortDir = -1, data = null, seq = 0;
     const PRESETS = [['today', '今天'], ['yesterday', '昨天'], ['week', '本周'], ['lastweek', '上周'], ['month', '本月'], ['lastmonth', '上月'], ['7d', '近 7 天'], ['30d', '近 30 天'], ['all', '全部']];
     const seg = h('div', { class: 'seg seg-wrap' });
     const fIn = h('input', { class: 'input input-sm', type: 'date', max: bjToday() });
     const tIn = h('input', { class: 'input input-sm', type: 'date', max: bjToday() });
-    const ownerSel = h('select', { class: 'select select-sm', style: { width: 'auto' } }, h('option', { value: 'all', text: '全部账号' }));
+    const ownerSel = h('select', { class: 'select select-sm', style: { width: 'auto' } }, h('option', { value: '', text: '按成员…' }));
+    const scopeSeg = h('div', { class: 'seg seg-scope' });
+    const SCOPES = [['all', '全部（号池）'], ['own', '仅我的号'], ['members', '仅成员号']];
+    const paintScope = () => {
+      clear(scopeSeg, SCOPES.map(([k, l]) => h('button', { type: 'button', class: ownerF === k ? 'on' : '', onclick: () => { ownerF = k; localStorage.setItem('polo_stats_scope', k); ownerSel.value = ''; paintScope(); if (data) draw(); } }, l)));
+      ownerSel.classList.toggle('on', !SCOPES.some(([k]) => k === ownerF));
+    };
+    paintScope();
     const reloadBtn = h('button', { class: 'btn btn-secondary btn-sm btn-icon', type: 'button', title: '重新加载', 'aria-label': '重新加载' }, icon('refresh', 'icon icon-sm'));
     const info2 = h('div', { class: 'faint xs' });
     const bar = h('div', { class: 'card stats-bar' }, h('div', { class: 'stats-bar-in' }, seg,
-      h('div', { class: 'row wrap', style: { gap: '6px' } }, fIn, h('span', { class: 'faint', text: '→' }), tIn, ownerSel, reloadBtn)), info2);
+      h('div', { class: 'row wrap', style: { gap: '6px' } }, fIn, h('span', { class: 'faint', text: '→' }), tIn, reloadBtn)),
+      h('div', { class: 'row wrap stats-scope' }, h('span', { class: 'label', text: '统计范围' }), scopeSeg, ownerSel), info2);
     const body = h('div', { class: 'stats-body' }, h('div', { class: 'stats' }, skeletonStats(4)));
     append(main, bar, body);
     const paintSeg = () => clear(seg, PRESETS.map(([k, l]) => h('button', { type: 'button', class: preset === k ? 'on' : '', onclick: () => { preset = k; localStorage.setItem('polo_stats_preset', k); range = presetRange(k, localStorage.getItem('polo_stats_min')); load(); } }, l)));
@@ -2170,7 +2464,7 @@
       preset = 'custom'; localStorage.setItem('polo_stats_preset', 'custom'); localStorage.setItem('polo_stats_custom', JSON.stringify(range)); load();
     };
     fIn.addEventListener('change', onDate); tIn.addEventListener('change', onDate);
-    ownerSel.addEventListener('change', () => { ownerF = ownerSel.value; draw(); });
+    ownerSel.addEventListener('change', () => { if (!ownerSel.value) return; ownerF = ownerSel.value; paintScope(); draw(); });
     reloadBtn.addEventListener('click', () => load());
     S.onTheme = () => { if (data) draw(); };
 
@@ -2188,9 +2482,12 @@
         for (const day of d.days) for (const r of day.rows) if (r.owner !== null && r.owner !== undefined) owners.add(r.owner);
         for (const a of d.accounts) if (a.owner) owners.add(a.owner);
         const keep = ownerF;
-        clear(ownerSel, h('option', { value: 'all', text: '全部账号' }), h('option', { value: 'own', text: '只看自有号' }), [...owners].map((id) => h('option', { value: String(id), text: '归 ' + uname(id) })));
-        ownerSel.value = [...ownerSel.options].some((o) => o.value === keep) ? keep : 'all';
-        ownerF = ownerSel.value;
+        clear(ownerSel, h('option', { value: '', text: '按成员…' }), [...owners].map((id) => h('option', { value: String(id), text: '归 ' + uname(id) })));
+        if (!SCOPES.some(([k]) => k === keep)) {
+          ownerSel.value = [...ownerSel.options].some((o) => o.value === keep) ? keep : '';
+          ownerF = ownerSel.value || 'all';
+        }
+        paintScope();
         draw();
       } catch (e) { if (my === seq) clear(body, h('div', { class: 'card' }, h('div', { class: 'card-body' }, emptyState(errText(e), 'warning')))); }
       finally { if (my === seq) reloadBtn.disabled = false; }
@@ -2205,7 +2502,10 @@
       const dayList = [];
       for (let d = lo; d <= hi; d = addDays(d, 1)) dayList.push(d);
       const byDay = Object.fromEntries(data.days.map((d) => [d.day, d]));
-      const pass = (r) => ownerF === 'all' || (ownerF === 'own' ? r.owner === null || r.owner === undefined : r.owner === Number(ownerF));
+      const isOwn = (r) => r.owner === null || r.owner === undefined;
+      const pass = (r) => ownerF === 'all' || (ownerF === 'own' ? isOwn(r) : ownerF === 'members' ? !isOwn(r) : r.owner === Number(ownerF));
+      let poolUsd = 0;
+      for (const day of dayList) for (const r of (byDay[day] || { rows: [] }).rows) poolUsd += r.usd;
       const acc = {};
       const daily = dayList.map((day) => ({ day, usd: 0, req: 0, tok: 0, opus: 0, fable: 0, my: 0, member: 0, live: day === data.today, fetched: !!byDay[day] }));
       const ownerUsd = {};
@@ -2228,19 +2528,26 @@
       const T = { usd: sum('usd'), req: sum('req'), tok: sum('tok'), my: sum('my'), member: sum('member'), opus: sum('opus'), fable: sum('fable') };
       const nDays = Math.max(1, daily.filter((d) => d.fetched).length);
       const best = daily.reduce((b, d) => (d.usd > (b ? b.usd : -1) ? d : b), null);
-      const prev = ownerF === 'all' ? data.prev : null;
-      const ownName = (k) => (k === 'own' ? '自有号' : uname(Number(k)));
-      info2.textContent = `${lo} → ${hi} · ${nDays} 天有数据${data.days.some((d) => d.day === data.today) ? ' · 今天的数据每 15 分钟更新' : ''} · 汇率 ¥${rate}/$ · 利润按当天的归属和抽成比例估算（未扣成员回本），实际以结算单为准`;
+      const bo = (data.prev && data.prev.by_owner) || {};
+      const prev = ownerF === 'all' ? data.prev : !data.prev.days ? null
+        : Object.entries(bo).filter(([k]) => (ownerF === 'own' ? k === 'own' : ownerF === 'members' ? k !== 'own' : k === ownerF))
+          .reduce((a, [, v]) => ({ usd: a.usd + v.usd, requests: a.requests + v.requests }), { usd: 0, requests: 0 });
+      const scopeName = ownerF === 'all' ? '全部（号池）' : ownerF === 'own' ? '仅我的号' : ownerF === 'members' ? '仅成员号' : '归 ' + uname(Number(ownerF));
+      const poolPct = poolUsd ? (T.usd / poolUsd) * 100 : 0;
+      const ownName = (k) => (k === 'own' ? '我的号' : uname(Number(k)));
+      info2.textContent = `${lo} → ${hi} · ${nDays} 天有数据${data.days.some((d) => d.day === data.today) ? ' · 今天的数据每 15 分钟更新' : ''} · 汇率 ¥${rate}/$ · 利润按当天的归属和抽成比例估算（未扣成员回本），实际以结算单为准${ownerF === 'all' ? '' : ` · 现在只统计「${scopeName}」，一天内归属不到半天的算我的号`}`;
       if (!accs.length && !T.usd) {
         clear(body, h('div', { class: 'card' }, h('div', { class: 'card-body' }, emptyState(dayList.length ? '这段时间没有额度数据' : `统计从 ${data.stats_from} 开始，这段时间还没有数据`, 'chart'))));
         return;
       }
       // KPI
       const kpis = h('div', { class: 'stats kpis' },
-        kpiCard('总额度', T.usd, usd, 'dollar', 'blue', { delta: prev && deltaChip(T.usd, prev.usd), sub: `日均 ${usd(T.usd / nDays)}` }),
+        kpiCard(ownerF === 'all' ? '总额度' : ownerF === 'own' ? '我的号额度' : ownerF === 'members' ? '成员号额度' : '额度', T.usd, usd, 'dollar', 'blue', { delta: prev && deltaChip(T.usd, prev.usd), sub: `日均 ${usd(T.usd / nDays)}${ownerF === 'all' ? '' : ` · 占号池 ${poolPct.toFixed(1)}%`}` }),
         kpiCard('产出（按汇率）', T.usd * rate, cny, 'activity', 'purple', { delta: prev && deltaChip(T.usd, prev.usd), sub: `每 $1 = ¥${rate}` }),
-        kpiCard('我的利润（估）', T.my, cny, 'trend', 'ok', { sub: `自有号 ${cny(accs.filter((a) => a.owners.has('own')).reduce((s, a) => s + a.my, 0))}`, tip: '自有号按汇率全算你的；成员号按当天的抽成比例估算（回本期间实际不抽成），实际以结算单为准' }),
-        kpiCard('成员应得（估）', T.member, cny, 'users', 'cyan', { sub: data.settle.count ? `期间已结算 ${cny(data.settle.member_cny)}` : '期间还没有结算' }),
+        kpiCard('我的利润（估）', T.my, cny, 'trend', 'ok', { sub: ownerF === 'own' ? '我的号按汇率全算我的' : `我的号 ${cny(accs.filter((a) => a.owners.has('own')).reduce((s, a) => s + a.my, 0))}`, tip: '我的号按汇率全算你的；成员号按当天的抽成比例估算（回本期间实际不抽成），实际以结算单为准' }),
+        ownerF === 'own'
+          ? kpiCard('占号池', poolPct, (v) => v.toFixed(1) + '%', 'users', 'cyan', { sub: `号池合计 ${usd(poolUsd)} · 成员号 ${usd(poolUsd - T.usd)}` })
+          : kpiCard('成员应得（估）', T.member, cny, 'users', 'cyan', { sub: data.settle.count ? `期间已结算 ${cny(data.settle.member_cny)}` : '期间还没有结算' }),
         kpiCard('请求', T.req, (v) => compact(Math.round(v)), 'server', 'blue', { delta: prev && deltaChip(T.req, prev.requests), sub: `Token ${compact(T.tok)}` }),
         kpiCard('活跃账号', accs.filter((a) => a.usd > 0).length, (v) => String(Math.round(v)), 'cube', 'purple', { sub: best && best.usd ? `最高一天 ${best.day.slice(5)} ${usd(best.usd)}` : '' }));
       // 图表卡片
@@ -2253,10 +2560,10 @@
       const single = dayList.length === 1;
       const trend = card(single ? `${dayList[0]} 每小时额度` : '每日额度', 'chart', 'chart-lg',
         single ? null : segOf([['account', '按账号'], ['owner', '按归属']], trendMode, (k) => { trendMode = k; localStorage.setItem('polo_stats_trend', k); draw(); }),
-        single ? '全池（不区分归属）' : '柱子：每个账号 / 每位成员当天的额度；折线：我的利润（估）');
+        single ? (ownerF === 'all' ? '全池（不区分归属）' : '每小时数据只有号池合计，这张图不随“统计范围”变化') : '柱子：每个账号 / 每位成员当天的额度；折线：我的利润（估）');
       const rank = card('账号贡献排行', 'trend', '', null, '额度从高到低；标签是 额度 · 我的利润（估）');
       const pie = card('额度占比', 'cube', '', segOf([['account', '按账号'], ['owner', '按归属'], ['model', '按模型']], pieMode, (k) => { pieMode = k; draw(); }));
-      const heat = card('24 小时分布', 'clock', '', null, '全池每小时的额度（北京时间），颜色越深越多');
+      const heat = card('24 小时分布', 'clock', '', null, ownerF === 'all' ? '全池每小时的额度（北京时间），颜色越深越多' : '号池合计（每小时数据不分账号，不随“统计范围”变化）');
       const model = card('模型额度', 'activity', '', null, 'Opus / Fable / 其他模型每天用了多少额度');
       const reqc = card('请求与 Token', 'server', '', null, '柱子：请求数；折线：Token');
       // 结算与成本
@@ -2271,6 +2578,14 @@
             h('div', {}, h('small', { text: '我的抽成' }), h('b', { class: 'text-ok', text: cny(stl.admin_cny) })),
             h('div', {}, h('small', { text: '其中回本' }), h('b', { class: 'text-warn', text: cny(stl.recover_cny) })),
             h('div', {}, h('small', { text: '期间新增成本' }), h('b', { text: `${cny(data.costs.cny)}（${data.costs.count} 笔）` }))),
+          (data.upstream || []).length ? (() => {
+            const ups = data.upstream, uu = ups.reduce((s, x) => s + x.usd, 0), recv = {};
+            for (const x of ups) if (x.received !== null) recv[x.currency || 'CNY'] = (recv[x.currency || 'CNY'] || 0) + x.received;
+            return h('div', { class: 'up-sum' }, h('b', { text: `上家结算 ${ups.length} 次` }),
+              h('span', { text: `额度 ${usd(uu)}（我的号 ${usd(ups.reduce((s, x) => s + x.mine_usd, 0))} · 成员号 ${usd(ups.reduce((s, x) => s + x.members_usd, 0))}）` }),
+              Object.keys(recv).length ? h('span', { text: '收款 ' + Object.entries(recv).map(([k, v]) => (k === 'USDT' ? usdtFmt(v) : cny(v))).join(' + ') }) : null,
+              h('a', { href: '#/admin/settle?tab=upstream', text: '查看 →' }));
+          })() : null,
           settleRows.length ? h('div', { class: 'srows' }, settleRows.map(([uid, x], i) => {
             const a = h('i', { class: 'sb-m' }), b = h('i', { class: 'sb-a' });
             a.style.width = (x.member_cny / maxS) * 100 + '%'; b.style.width = (x.admin_cny / maxS) * 100 + '%';
