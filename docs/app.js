@@ -655,24 +655,160 @@
         others.length ? h('span', { class: 'chip chip-warn', title: '这些账号使用同一个出口 IP', text: '与 ' + others.join('、') + ' 共用' }) : null));
   }
   function accountRow(r, shared) {
-    const d = r.detail || {}, hl = r.health || {}, t = d.today || {}, rt = d.realtime || {};
+    const d = r.detail || {}, hl = r.health || {}, t = d.today || {}, rt = d.realtime || {}, hs = d.history || {};
+    const admin = isAdmin();
     const lastUsed = ago(d.last_used_at) || hl.last_used_display;
-    return h('tr', {},
+    const on = !r.state || r.state === '启用';
+    const conc = toNum(rt.concurrency !== undefined && rt.concurrency !== null ? rt.concurrency : hl.concurrency) || 0;
+    const old = d.usage_updated_at && Date.now() - toDate(d.usage_updated_at).getTime() > 30 * 60000;
+    const meta = [hl.added_at ? `添加 ${fmtShort(hl.added_at)}` : null,
+      lastUsed ? `${lastUsed}使用` : null].filter(Boolean).join(' · ');
+    return h('tr', { class: 'lrow' + (on ? '' : ' off') },
+      // 账号
       h('td', { 'data-label': '' },
-        h('div', { class: 'cell-title', text: dash(r.display_name) }),
-        r.email ? h('div', { class: 'email mono', title: r.email + '（点击复制）', onclick: () => copy(r.email, '邮箱') }, r.email) : null,
-        h('div', { class: 'chips', style: { marginTop: '5px' } },
-          (r.groups || []).map((g) => h('span', { class: 'chip chip-blue', text: g })),
-          (r.plan || []).map((p) => h('span', { class: 'chip', text: p })))),
-      h('td', { 'data-label': '状态' }, statusCell(r)),
-      h('td', { 'data-label': '出口 IP' }, ipCell(r, shared || {})),
-      h('td', { 'data-label': '额度' }, usageBlock(r)),
-      h('td', { 'data-label': '今日' }, kv([['请求', compact(t.requests)], ['Token', compact(t.tokens)], ['费用', t.cost, 'text-ok']])),
-      h('td', { 'data-label': '实时' }, h('div', { class: 'chips', style: { maxWidth: '150px' } },
-        h('span', { class: 'chip', text: '并发 ' + dash(rt.concurrency) }), h('span', { class: 'chip', text: 'RPM ' + dash(rt.rpm) }),
-        h('span', { class: 'chip', text: 'TPM ' + dash(rt.tpm) }), h('span', { class: 'chip', text: '会话 ' + dash(rt.sessions) }))),
-      h('td', { 'data-label': '24 小时' }, kv([['请求', hl.requests_24h], ['成功率', hl.success_24h], ['限流', hl.rate_limits_24h]])),
-      h('td', { 'data-label': '最近使用', class: 'nowrap' }, h('span', { title: d.last_used_at ? fmtTime(d.last_used_at) : '', text: dash(lastUsed) })));
+        h('div', { class: 'l-line' },
+          h('span', { class: 'tag-claude', text: 'Claude' }),
+          r.email ? h('span', { class: 'l-email', title: r.email + '（点击复制）', onclick: () => copy(r.email, '邮箱') }, r.email) : h('span', { class: 'l-email', text: dash(r.display_name) }),
+          h('span', { class: 'switch' + (on ? ' on' : ''), title: `后台状态：${r.state || '未知'}（只读）` }, h('i'))),
+        h('div', { class: 'l-line', style: { marginTop: '6px' } },
+          seatBadge(r, admin), planChips(r),
+          (r.groups || []).map((g) => h('span', { class: 'chip chip-orange', text: g })),
+          h('span', { class: 'l-name mono', title: '后台显示名', text: dash(r.display_name) })),
+        h('div', { class: 'l-sub' }, meta || '—'),
+        d.usage_updated_at ? h('div', { class: 'l-sub' + (old ? ' text-warn' : ''), title: '后台最近一次刷新该账号用量：' + fmtTime(d.usage_updated_at) }, `用量 ${ago(d.usage_updated_at)}更新`) : null),
+      // 状态 + 实时
+      h('td', { 'data-label': '状态 / 实时' },
+        h('div', { class: 'l-line' }, statusBadge(r),
+          h('span', { class: 'rt-box', title: `实时并发 ${conc} · 会话 ${dash(rt.sessions)} · Session Slots 使用中 ${dash(hl.session_slots)}` },
+            h('b', { class: 'rt-num' + (conc > 0 ? ' live' : ''), text: String(conc) }),
+            h('span', { text: `会话 ${dash(rt.sessions)}` }),
+            hl.session_slots !== undefined && hl.session_slots !== null ? h('span', { class: 'faint', text: `· 槽位 ${hl.session_slots}` }) : null)),
+        healthBar(r),
+        h('div', { class: 'l-line', style: { marginTop: '6px' } }, ipMini(r, shared || {}))),
+      // 请求
+      h('td', { 'data-label': '请求' },
+        h('div', { class: 'req' },
+          h('span', { class: 'req-k', text: '今日' }), h('span', {}, h('b', { class: 'mono', text: compact(t.requests) }), h('span', { class: 'faint xs', text: ' req' })),
+          h('span', { class: 'req-k', text: '7D' }), h('span', {}, h('span', { class: 'pill p-ok', title: '最近 7 天请求数', text: compact(hs['7d'] && hs['7d'].requests) })),
+          h('span', { class: 'req-k', text: '24H' }), h('span', {},
+            h('span', { class: 'pill p-ok', title: '24 小时请求数', text: dash(hl.requests_24h) }),
+            h('span', { class: 'pill ' + ((toNum(hl.rate_limits_24h) || 0) > 0 ? 'p-bad' : 'p-mute'), title: '24 小时限流次数', text: dash(hl.rate_limits_24h) })),
+          h('span', { class: 'req-k', text: 'RPM' }), h('span', { class: 'mono small', title: `TPM ${dash(rt.tpm)}`, text: `${dash(rt.rpm)} · TPM ${compact(rt.tpm)}` }))),
+      // 额度
+      h('td', { 'data-label': '额度窗口' }, quotaRows(r)),
+      // 消耗
+      h('td', { 'data-label': '消耗' },
+        h('div', { class: 'cost' },
+          costRow('今日', t.cost, t.tokens), costRow('5H', hs['5h'] && hs['5h'].official_cost, hs['5h'] && hs['5h'].tokens),
+          costRow('7D', hs['7d'] && hs['7d'].official_cost, hs['7d'] && hs['7d'].tokens), costRow('30D', hs['30d'] && hs['30d'].official_cost, hs['30d'] && hs['30d'].tokens, true))),
+      h('td', { 'data-label': '', class: 'l-act' }, h('button', { class: 'icon-btn', type: 'button', title: '更多', onclick: (e) => rowMenu(e.currentTarget, r) }, '⋯')));
+  }
+  function fmtShort(v) {
+    const x = toDate(v); if (isNaN(x)) return '—';
+    return x.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).replace('/', '-');
+  }
+  function leftShort(v) {
+    const ms = toDate(v).getTime() - Date.now();
+    if (isNaN(ms)) return null;
+    if (ms <= 0) return '待刷新';
+    const m = Math.floor(ms / 60000), dd = Math.floor(m / 1440), hh = Math.floor((m % 1440) / 60), mm = m % 60;
+    return (dd ? dd + 'd' : '') + (dd || hh ? hh + 'h' : '') + mm + 'm';
+  }
+  function quotaRows(r) {
+    const keys = [...WIN_ORDER.filter((k) => r.quota && r.quota[k]), ...Object.keys(r.quota || {}).filter((k) => !WIN_ORDER.includes(k))];
+    if (!keys.length) return h('span', { class: 'faint', text: '—' });
+    const box = h('div', { class: 'qrows' });
+    for (const k of keys) {
+      const q = r.quota[k], meta = WIN[k] || { label: k };
+      const label = h('span', { class: 'q-k', text: meta.label.replace(/^5h$/, '5H').replace(/^7d$/, '7D') });
+      if (typeof q.used_pct === 'number') {
+        const p = q.used_pct, lv = p >= 90 ? 'bad' : p >= 75 ? 'warn' : 'ok';
+        const fill = h('div', { class: 'u-fill uf-' + lv }); fill.style.width = Math.min(100, Math.max(0, p)) + '%';
+        const left = q.reset_at ? leftShort(q.reset_at) : null;
+        const pend = left === '待刷新' && p > 0;
+        append(box, label, h('div', { class: 'q-track' }, fill), h('span', { class: 'q-pct ' + (lv === 'ok' ? '' : lv), text: pct(p) }),
+          h('span', { class: 'q-left mono' + (pend ? ' text-warn' : ''), title: q.reset_at ? '重置于 ' + fmtTime(q.reset_at) : '重置时间未知', text: left && (left !== '待刷新' || pend) ? left : (left === '待刷新' ? '已重置' : '—') }));
+      } else {
+        append(box, label, h('span', { class: 'q-note', text: q.status || '未返回独立额度' }));
+      }
+    }
+    const rc = Object.entries(r.reset_counts || {}).filter(([, v]) => v !== null && v !== undefined && v !== '');
+    if (rc.length) box.append(h('div', { class: 'q-foot' }, icon('refresh', 'icon icon-sm'), '重置次数 ' + rc.map(([k, v]) => `${k} ${v}`).join(' · ')));
+    return box;
+  }
+  function costRow(k, cost, tok, strong) {
+    return h('div', { class: 'cost-row' + (strong ? ' strong' : '') }, h('span', { class: 'q-k', text: k }), h('span', { class: 'mono', text: dash(cost) }), h('span', { class: 'mono faint', text: tok ? compact(tok) + ' tok' : '—' }));
+  }
+  function healthBar(r) {
+    const d = r.detail || {}, hl = r.health || {};
+    const off = r.state && r.state !== '启用';
+    const st = off ? (r.state || '停用') : (d.cooldown_text ? '冷却中' : d.status === '正常' || !d.status ? '可用' : d.status);
+    const tone = off ? 'gray' : st === '可用' ? 'ok' : /冷却|限流|过载/.test(st) ? 'warn' : 'bad';
+    const rate = toNum(hl.success_24h);
+    const N = 24, good = rate === null || rate === undefined || isNaN(rate) ? N : Math.round((rate / 100) * N);
+    const bar = h('div', { class: 'hbar', title: rate === null || rate === undefined || isNaN(rate) ? '近 24 小时没有成功率数据（无请求）' : `近 24 小时成功率 ${hl.success_24h}` });
+    for (let i = 0; i < N; i++) bar.append(h('i', { class: i < good ? 'h-' + tone : 'h-bad' }));
+    return h('div', { class: 'hbar-wrap' }, bar, h('span', { class: 'h-label t-' + tone, text: st }));
+  }
+  function ipMini(r, shared) {
+    const px = r.detail && r.detail.proxy;
+    if (!px) return h('span', { class: 'faint small', text: '出口未读取' });
+    if (px.mode === 'direct') return h('span', { class: 'pill p-mute', text: '直连' });
+    if (px.mode !== 'proxy') return h('span', { class: 'faint small', text: '出口未识别' });
+    const ip = px.ip || px.host, lat = px.latency_ms;
+    const tone = px.health === '可用' ? (lat !== null && lat !== undefined && lat >= 500 ? 'p-warn' : 'p-ok') : 'p-bad';
+    const others = (shared[ip] || []).filter((n) => n !== (r.display_name || r.email));
+    return [h('span', { class: 'pill ' + tone + ' ip-pill', title: `${px.protocol || '代理'}:${dash(px.port)} · ${dash(px.health)}${lat !== null && lat !== undefined ? ' ' + lat + 'ms' : ''}${px.host && px.host !== ip ? '\n主机名：' + px.host : ''}\n点击复制`, onclick: () => copy(ip, ' IP') }, icon('globe', 'icon icon-sm'), h('span', { class: 'mono', text: ip }), lat !== null && lat !== undefined ? h('span', { class: 'xs', style: { opacity: '.75' }, text: lat + 'ms' }) : null),
+      others.length ? h('span', { class: 'chip chip-warn', title: '这些账号使用同一个出口 IP', text: '与 ' + others.join('、') + ' 共用' }) : null];
+  }
+  // ---------- Team 席位（管理员手动标记） ----------
+  const isTeam = (r) => (r.plan || []).some((p) => /team/i.test(p));
+  function seatBadge(r, admin) {
+    if (!isTeam(r) && !r.seat) return null;
+    const polo = (r.plan || []).find((p) => /team/i.test(p)) || '';
+    const auto = !r.seat && polo && !/待识别/.test(polo) ? polo : null;
+    const txt = r.seat === 'premium' ? 'TEAM 高级' : r.seat === 'standard' ? 'TEAM 标准' : auto ? auto.toUpperCase() : 'TEAM · 待标记';
+    const cls = 'seat ' + (r.seat === 'premium' ? 'seat-premium' : r.seat === 'standard' ? 'seat-standard' : auto ? 'seat-standard' : 'seat-unset');
+    const tip = r.seat ? `管理员 ${r.seat_by || ''} 手动标记${r.seat_at ? '（' + fmtTime(r.seat_at) + '）' : ''}` : auto ? '后台识别的席位' : '后台未识别席位类型';
+    if (!admin) return h('span', { class: cls, title: tip, text: txt });
+    const b = h('button', { class: cls, type: 'button', title: tip + '\n点击修改标记' }, txt, h('span', { class: 'seat-caret', text: '▾' }));
+    b.addEventListener('click', (e) => { e.stopPropagation(); seatMenu(b, r); });
+    return b;
+  }
+  function planChips(r) {
+    return (r.plan || []).filter((p) => !/team/i.test(p)).map((p) => h('span', { class: 'chip', text: p }));
+  }
+  function seatMenu(anchor, r) {
+    menu(anchor, [
+      { label: 'TEAM 高级席位', checked: r.seat === 'premium', onClick: () => setSeat(r, 'premium') },
+      { label: 'TEAM 标准（普通）席位', checked: r.seat === 'standard', onClick: () => setSeat(r, 'standard') },
+      '-',
+      { label: '清除标记', icon: 'x', disabled: !r.seat, onClick: () => setSeat(r, null) },
+    ], `标记席位 · ${r.display_name || r.email}`);
+  }
+  function rowMenu(anchor, r) {
+    const ip = ipOf(r);
+    const items = [];
+    if (isAdmin() && (isTeam(r) || r.seat)) {
+      items.push({ label: '标记为 TEAM 高级', checked: r.seat === 'premium', onClick: () => setSeat(r, 'premium') },
+        { label: '标记为 TEAM 标准（普通）', checked: r.seat === 'standard', onClick: () => setSeat(r, 'standard') },
+        { label: '清除席位标记', disabled: !r.seat, onClick: () => setSeat(r, null) }, '-');
+    }
+    items.push({ label: '复制邮箱', icon: 'copy', disabled: !r.email, onClick: () => copy(r.email, '邮箱') },
+      { label: '复制出口 IP', icon: 'globe', disabled: !ip, onClick: () => copy(ip, ' IP') });
+    menu(anchor, items, r.display_name || r.email);
+  }
+  async function setSeat(r, seat) {
+    const key = r.account_key || (r.email ? r.email.toLowerCase() : null);
+    if (!key) return toast('这个账号没有邮箱，无法标记', 'bad');
+    try {
+      await api('POST', '/admin/accounts/seat', { account_key: key, seat });
+      const rows = (S.dash && S.dash.accounts && S.dash.accounts.data && S.dash.accounts.data.rows) || [];
+      for (const x of rows) if ((x.account_key || (x.email || '').toLowerCase()) === key) { x.seat = seat; x.seat_by = S.user && S.user.username; x.seat_at = Math.floor(Date.now() / 1000); }
+      if (!rows.includes(r)) { r.seat = seat; }
+      toast(seat ? `已把 ${r.display_name || r.email} 标记为 TEAM ${seat === 'premium' ? '高级' : '标准'}` : `已清除 ${r.display_name || r.email} 的席位标记`, 'ok');
+      if (S.redrawAccounts) S.redrawAccounts();
+    } catch (e) { toast(errText(e), 'bad'); }
   }
   const maxPct = (r) => Math.max(-1, ...Object.values(r.quota || {}).map((q) => (typeof q.used_pct === 'number' ? q.used_pct : -1)));
   function ipLine(r, shared) {
@@ -698,7 +834,7 @@
     const old = d.usage_updated_at && Date.now() - toDate(d.usage_updated_at).getTime() > 30 * 60000;
     const statRow = (label, x, costKey) => h('tr', {}, h('td', { text: label }), h('td', { text: compact(x && x.requests) }),
       h('td', { text: compact(x && x.tokens) }), h('td', { class: 'text-ok', title: x && x.billed_cost ? `计费价 ${x.billed_cost}` : null, text: dash(x && x[costKey]) }));
-    const tags = [...(r.groups || []).map((g) => h('span', { class: 'chip chip-blue', text: g })), ...(r.plan || []).map((p) => h('span', { class: 'chip', text: p }))];
+    const tags = [seatBadge(r, isAdmin()), ...planChips(r), ...(r.groups || []).map((g) => h('span', { class: 'chip chip-orange', text: g }))].filter(Boolean);
     return h('div', { class: 'acard' + (off ? ' off' : mp >= 90 ? ' hot' : mp >= 75 ? ' warm' : '') },
       h('div', { class: 'ac-head' },
         h('div', { class: 'ac-id' },
@@ -770,9 +906,9 @@
     const paintSeg = () => clear(seg, segs.map(([k, l]) => h('button', { type: 'button', class: filter === k ? 'on' : '', onclick: () => { filter = k; paintSeg(); drawTable(); } }, l)));
     paintSeg();
     const sortSel = h('select', { class: 'select select-sm', style: { width: 'auto' } }, Object.entries(SORTS).map(([k, v]) => h('option', { value: k, selected: k === sortKey, text: v.label })));
-    let view = localStorage.getItem('polo_view') === 'list' ? 'list' : 'card';
+    let view = localStorage.getItem('polo_view') === 'card' ? 'card' : 'list';
     const viewSeg = h('div', { class: 'seg', title: '显示方式' });
-    const paintView = () => clear(viewSeg, [['card', '卡片'], ['list', '列表']].map(([k, l]) => h('button', { type: 'button', class: view === k ? 'on' : '', onclick: () => { view = k; localStorage.setItem('polo_view', k); paintView(); drawTable(); } }, l)));
+    const paintView = () => clear(viewSeg, [['list', '列表'], ['card', '卡片']].map(([k, l]) => h('button', { type: 'button', class: view === k ? 'on' : '', onclick: () => { view = k; localStorage.setItem('polo_view', k); paintView(); drawTable(); } }, l)));
     paintView();
     sortSel.addEventListener('change', () => { sortKey = sortSel.value; localStorage.setItem('polo_sort', sortKey); drawTable(); });
     search.input.addEventListener('input', () => drawTable());
@@ -781,9 +917,9 @@
     const auto = autoRefreshControl(() => load());
     refreshBtn.addEventListener('click', () => { auto.reset(); load(); });
     const countText = h('span', { class: 'muted small' });
-    const tbody = h('tbody', {}, Array.from({ length: 4 }, () => h('tr', {}, Array.from({ length: 8 }, () => h('td', {}, h('div', { class: 'skeleton sk-line' }))))));
+    const tbody = h('tbody', {}, Array.from({ length: 4 }, () => h('tr', {}, Array.from({ length: 6 }, () => h('td', {}, h('div', { class: 'skeleton sk-line' }))))));
     const table = h('table', { class: 'table responsive accounts' },
-      h('thead', {}, h('tr', {}, ['账号 / 邮箱', '状态', '出口 IP', '额度窗口', '今日', '实时', '24 小时', '最近使用'].map((t) => h('th', { text: t })))), tbody);
+      h('thead', {}, h('tr', {}, ['账号', '状态 / 实时并发', '请求', '额度窗口', '消耗（官方价）', ''].map((t) => h('th', { text: t })))), tbody);
     const ops = h('div', { class: 'ops' });
     const grid = h('div', { class: 'agrid' }, Array.from({ length: 6 }, () => h('div', { class: 'acard' },
       h('div', { class: 'skeleton sk-line', style: { width: '45%', height: '16px' } }), h('div', { class: 'skeleton sk-line', style: { width: '70%' } }),
@@ -801,11 +937,12 @@
       admin ? ops : null);
 
     function drawTable() {
+      S.redrawAccounts = drawTable;
       const d = S.dash;
       if (!d) return;
       const rows = (d.accounts && d.accounts.data && d.accounts.data.rows) || [];
       const q = search.input.value.trim().toLowerCase();
-      let list = rows.filter((r) => !q || [r.display_name, r.email, ipOf(r), ...(r.groups || []), ...(r.plan || [])].join(' ').toLowerCase().includes(q));
+      let list = rows.filter((r) => !q || [r.display_name, r.email, ipOf(r), r.seat === 'premium' ? 'team 高级' : r.seat === 'standard' ? 'team 标准 普通' : '待标记', ...(r.groups || []), ...(r.plan || [])].join(' ').toLowerCase().includes(q));
       if (filter === 'high') list = list.filter((r) => maxPct(r) >= 75);
       if (filter === 'abnormal') list = list.filter(isAbnormal);
       const s = SORTS[sortKey];
@@ -823,7 +960,7 @@
         else clear(grid, list.map((r) => accountCard(r, shared)));
       } else {
         if (listBox.firstChild !== tableWrap) clear(listBox, tableWrap);
-        if (!list.length) clear(tbody, h('tr', {}, h('td', { colspan: '8' }, empty())));
+        if (!list.length) clear(tbody, h('tr', {}, h('td', { colspan: '6' }, empty())));
         else clear(tbody, list.map((r) => accountRow(r, shared)));
       }
       paintUpdated();
@@ -963,7 +1100,7 @@
           const e = settled[0].reason;
           if (e && (e.status === 401 || e.code === 'password_change_required')) return;
           toast(errText(e), 'bad');
-          if (!S.dash) { const err = emptyState(errText(e), 'warning'); clear(tbody, h('tr', {}, h('td', { colspan: '8' }, err.cloneNode(true)))); clear(grid, h('div', { style: { gridColumn: '1 / -1' } }, err)); }
+          if (!S.dash) { const err = emptyState(errText(e), 'warning'); clear(tbody, h('tr', {}, h('td', { colspan: '6' }, err.cloneNode(true)))); clear(grid, h('div', { style: { gridColumn: '1 / -1' } }, err)); }
           return;
         }
         S.dash = Object.fromEntries(keys.map((k, i) => [k, settled[i].status === 'fulfilled' ? settled[i].value : null]));
