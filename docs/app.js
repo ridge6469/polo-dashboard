@@ -1241,7 +1241,8 @@
   const moneyFmt = (n, sym) => (n === null || n === undefined || isNaN(n) ? '—' : (n < 0 ? '-' : '') + sym + Math.abs(Number(n)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
   const usd = (n) => moneyFmt(n, '$');
   const cny = (n) => moneyFmt(n, '¥');
-  const usd4 = (n) => (n === null || n === undefined ? '—' : '$' + Number(n).toFixed(4));
+  // 精确到 4 位小数的美元（至少 2 位，去掉多余的 0，带千分位）：5087.11 → $5,087.11，5087.1966 → $5,087.1966
+  const usd4 = (n) => (n === null || n === undefined || isNaN(n) ? '—' : (n < 0 ? '-' : '') + '$' + Math.abs(Number(n)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 }));
   const r2 = (x) => Math.sign(x) * Math.round((Math.abs(x) + Number.EPSILON) * 100) / 100;
   const usdtFmt = (n) => (n === null || n === undefined || isNaN(n) ? '—' : Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' USDT');
   Object.assign(ERR, {
@@ -1260,7 +1261,9 @@
     rate_unavailable: '汇率暂时取不到，请手动填写',
     range_too_long: '日期范围太长（最多 400 天）',
     not_reached: '额度还没达到这个数',
-    below_settled: '累计额度不能小于已经结算的累计额度',
+    below_settled: '累计额度不能小于已经记账的累计额度',
+    already_reached: '这个额度在上一个结算点就已经达到了（上次结转的部分就够了）',
+    empty_period: '这段时间没有需要结算的额度',
     bad_time: '时间不对：要在上一个结算点之后、现在前 2 分钟之前',
     up_start_locked: '已经有结算点了，起点不能再改',
     too_many_jobs: '后台任务太多，请稍后再试',
@@ -1701,18 +1704,20 @@
     rememberUsers(st.users);
     const info = acctMap(st.accounts);
     const reload = () => settleUpstream(body);
-    const set = st.settings, sd = st.settled, p = st.pending;
+    const set = st.settings, sd = st.settled, p = st.pending, carry = st.carry || 0;
+    const pTot = p ? p.usd + carry : null;
     const act = st.points.filter((x) => x.status === 'active');
     const last = act[0] || null;
     const est = (u) => (set.up_price ? curFmt(r2(u * set.up_price), set.up_currency) : null);
+    const carryTxt = Math.abs(carry) >= 0.00005 ? ` · 含上次结转 ${usd4(carry)}` : '';
     const notes = [];
     if (!p) notes.push(['n-info', 'refresh', '待结算数据正在更新（约半分钟），稍后点“刷新”。']);
     if (p && p.unmatched && p.unmatched.length) notes.push(['n-warn', 'warning', `有 ${p.unmatched.length} 个 Polo 账号没对应到邮箱（${p.unmatched.map((x) => `${x.name} ${usd(x.usd)}`).join('、')}），算在“我的号”里。`]);
     const recvTxt = Object.entries(sd.received).map(([k, v]) => curFmt(v, k)).join(' + ');
     const stats = h('div', { class: 'stats' },
-      statCard('待结算（上家）', p ? usd(p.usd) : '—', 'clock', 'warn', p ? `我的号 ${usd(p.mine_usd)} · 成员号 ${usd(p.members_usd)}${est(p.usd) ? ` · 预计 ${est(p.usd)}` : ''}` : '更新中'),
-      statCard('已结算（上家）', usd(sd.usd), 'check', 'ok', `${sd.count} 次 · 我的号 ${usd(sd.mine_usd)} · 成员号 ${usd(sd.members_usd)}`),
-      statCard('累计总额度', usd(sd.usd + (p ? p.usd : 0)), 'chart', 'blue', `从 ${fmtSec(set.up_start).slice(0, 16)} 起（所有成员 + 我的号）`),
+      statCard('待结算（上家）', p ? usd(pTot) : '—', 'clock', 'warn', p ? `我的号 ${usd(p.mine_usd)} · 成员号 ${usd(p.members_usd)}${carryTxt}${est(pTot) ? ` · 预计 ${est(pTot)}` : ''}` : '更新中'),
+      statCard('已结算（上家）', usd(sd.usd), 'check', 'ok', `${sd.count} 次${Math.abs(sd.polo_usd - sd.usd) >= 0.00005 ? ` · Polo 实际 ${usd4(sd.polo_usd)}` : ''} · 我的号 ${usd(sd.mine_usd)} · 成员号 ${usd(sd.members_usd)}`),
+      statCard('累计总额度', usd(sd.polo_usd + (p ? p.usd : 0)), 'chart', 'blue', `从 ${fmtSec(set.up_start).slice(0, 16)} 起（所有成员 + 我的号）`),
       statCard('已收款', recvTxt || '—', 'dollar', 'purple', last ? `上次结算点 ${fmtSec(last.end_at).slice(5, 16)}` : '还没有结算点'));
     const addBtn = h('button', { class: 'btn btn-primary btn-sm', type: 'button', onclick: () => upstreamAddModal(st, info, reload) }, icon('plus', 'icon icon-sm'), '添加结算点');
     const refBtn = h('button', { class: 'btn btn-secondary btn-sm', type: 'button' }, icon('refresh', 'icon icon-sm'), '刷新');
@@ -1736,7 +1741,7 @@
     // 待结算
     const pend = h('div', { class: 'card', style: { marginBottom: '16px' } },
       h('div', { class: 'card-head' }, h('div', {}, h('h3', { class: 'card-title' }, icon('clock'), '待结算（上家）'),
-        p ? h('div', { class: 'faint xs', text: `${fmtSec(p.start)} → ${fmtSec(p.end)} · ${usd(p.usd)}（我的号 ${usd(p.mine_usd)} · 成员号 ${usd(p.members_usd)}）` }) : null)),
+        p ? h('div', { class: 'faint xs', text: `${fmtSec(p.start)} → ${fmtSec(p.end)} · Polo 新增 ${usd(p.usd)}（我的号 ${usd(p.mine_usd)} · 成员号 ${usd(p.members_usd)}）${Math.abs(carry) >= 0.00005 ? ` ${carry > 0 ? '+' : '−'} 上次结转 ${usd4(Math.abs(carry))} = ${usd(pTot)}` : ''}` }) : null)),
       h('div', { class: 'card-body' }, p ? splitTable(p, info, p.coverage) : emptyState('更新中…', 'clock')));
     // 结算点记录
     const COLS = ['次', '区间（达成时间）', '额度', '我的号', '成员号', '收款', '给成员结算', ''];
@@ -1744,9 +1749,12 @@
     st.points.forEach((x) => {
       const voided = x.status !== 'active';
       const idx = act.length - act.indexOf(x);
-      const bd = { usd: x.usd, mine_usd: x.mine_usd, members: x.detail.members, accounts: x.detail.accounts, start: x.start_at, end: x.end_at };
+      const polo = x.polo_usd === null || x.polo_usd === undefined ? x.usd : x.polo_usd;
+      const bd = { usd: polo, mine_usd: x.mine_usd, members: x.detail.members, accounts: x.detail.accounts, start: x.start_at, end: x.end_at };
       const d = x.detail;
-      const how = x.mode === 'time' ? `${MODE_CN.time}：${fmtSec(x.target)}` : `${MODE_CN[x.mode]} ${usd(x.target)}${d.diff !== null && d.diff !== undefined ? `（实际多 ${usd4(d.diff)}）` : ''}`;
+      const gap = polo - x.usd;
+      const gapTxt = Math.abs(gap) >= 0.00005 ? (gap > 0 ? `，比记账多 ${usd4(gap)}（结转到下一段）` : `，比记账少 ${usd4(-gap)}（抵掉上次结转）`) : '';
+      const how = (x.mode === 'time' ? `${MODE_CN.time}：${fmtSec(x.target)}` : `${MODE_CN[x.mode]} ${usd4(x.target)}`) + ` · 记账 ${usd4(x.usd)} · Polo 实际 ${usd4(polo)}${gapTxt}`;
       const exp = h('tr', { class: 'exp-row', hidden: true }, h('td', { colspan: String(COLS.length) }, splitTable(bd, info, x.coverage),
         h('div', { class: 'faint xs', style: { marginTop: '6px' }, text: `${how} · ${x.created_by || ''} 录入于 ${fmtTime(x.created_at)}${x.note ? ' · 备注：' + x.note : ''}${voided ? ` · ${x.voided_by || ''} 于 ${fmtTime(x.voided_at)} 撤销` : ''}` })));
       const covs = Object.entries(x.coverage || {}).map(([u, c]) => h('span', { class: 'chip ' + (c.covered ? 'chip-ok' : 'chip-warn'), title: c.covered ? '已给成员结清这一段' : c.never ? '还没给成员结算' : `给成员结到 ${fmtSec(c.settled_until)}` }, (c.covered ? '✓ ' : '') + uname(Number(u))));
@@ -1760,7 +1768,8 @@
       const tr = h('tr', { class: 'click' + (voided ? ' voided-row' : ''), onclick: () => { exp.hidden = !exp.hidden; tr.classList.toggle('open', !exp.hidden); } },
         h('td', { 'data-label': '' }, h('b', { text: voided ? '—' : `第 ${idx} 次` }), voided ? h('span', { class: 'badge b-gray', style: { marginLeft: '6px' }, text: '已撤销' }) : null, h('div', { class: 'faint xs', text: `#${x.id}` })),
         h('td', { 'data-label': '区间', class: 'small nowrap' }, h('div', { class: 'faint', text: fmtSec(x.start_at) }), h('div', {}, '→ ', h('b', { text: fmtSec(x.end_at) }))),
-        h('td', { 'data-label': '额度', class: 'num money-strong', title: usd4(x.usd) }, usd(x.usd)),
+        h('td', { 'data-label': '额度', class: 'num' }, h('div', { class: 'money-strong', title: '记账额度（上家给的数）' }, usd4(x.usd)),
+          Math.abs(gap) >= 0.00005 ? h('div', { class: 'faint xs', title: '这一段 Polo 实际额度' }, 'Polo ' + usd4(polo)) : null),
         h('td', { 'data-label': '我的号', class: 'num' }, usd(x.mine_usd)),
         h('td', { 'data-label': '成员号', class: 'num' }, usd(x.members_usd)),
         h('td', { 'data-label': '收款', class: 'num' }, x.received !== null ? [h('div', { text: curFmt(x.received, x.currency) }), h('div', { class: 'faint xs', text: `每 $1 = ${x.currency === 'USDT' ? '' : '¥'}${(x.received / x.usd).toFixed(3)}${x.currency === 'USDT' ? ' USDT' : ''}` })] : h('span', { class: 'faint', text: '—' })),
@@ -1803,9 +1812,9 @@
     let cum = 0;
     const line = [[st.settings.up_start * 1000, 0]];
     for (const [hs, u] of st.hourly) { cum += u; const x = Math.min(hs + 3599, nowS); if (x < endX) line.push([x * 1000, r2(cum)]); }
-    if (p) line.push([p.end * 1000, r2(st.settled.usd + p.usd)]);
+    if (p) line.push([p.end * 1000, r2(st.settled.polo_usd + p.usd)]);
     let c2 = 0;
-    const pts = act.map((x, i) => { c2 += x.usd; return { value: [x.end_at * 1000, r2(c2)], id: x.id, n: i + 1, usd: x.usd }; });
+    const pts = act.map((x, i) => { c2 += x.polo_usd === null || x.polo_usd === undefined ? x.usd : x.polo_usd; return { value: [x.end_at * 1000, r2(c2)], id: x.id, n: i + 1, usd: x.usd }; });
     const lastEnd = act.length ? act[act.length - 1].end_at + 1 : st.settings.up_start;
     const base = baseOpt(t);
     const c1 = mkChart(el1);
@@ -1815,7 +1824,7 @@
         ps = Array.isArray(ps) ? ps : [ps];
         let html = `<div class="ct-title">${escHtml(fmtSec(ps[0].value[0] / 1000).slice(0, 16))}</div>`;
         for (const q of ps) {
-          if (q.seriesType === 'scatter') html += `<div class="ct-row"><i class="ct-dot cd3"></i><span>第 ${q.data.n} 次结算点（本次 ${escHtml(usd(q.data.usd))}）</span><b>${escHtml(usd(q.value[1]))}</b></div>`;
+          if (q.seriesType === 'scatter') html += `<div class="ct-row"><i class="ct-dot cd3"></i><span>第 ${q.data.n} 次结算点（记账 ${escHtml(usd4(q.data.usd))}）</span><b>${escHtml(usd(q.value[1]))}</b></div>`;
           else html += `<div class="ct-row"><i class="ct-dot cd7"></i><span>累计额度</span><b>${escHtml(usd(q.value[1]))}</b></div>`;
         }
         return html;
@@ -1825,7 +1834,7 @@
       series: [
         { name: '累计额度', type: 'line', data: line, showSymbol: false, smooth: 0.15, lineStyle: { width: 2.5, color: '#6366f1' }, itemStyle: { color: '#6366f1' },
           areaStyle: { color: grad(E, 'rgba(99,102,241,.28)', 'rgba(99,102,241,0)') },
-          markArea: p && p.usd > 0 ? { silent: true, itemStyle: { color: 'rgba(245,158,11,.12)' }, label: { show: true, position: 'insideTop', color: '#d97706', fontWeight: 700, formatter: '待结算 ' + usd(p.usd) },
+          markArea: p && p.usd + (st.carry || 0) > 0 ? { silent: true, itemStyle: { color: 'rgba(245,158,11,.12)' }, label: { show: true, position: 'insideTop', color: '#d97706', fontWeight: 700, formatter: '待结算 ' + usd(p.usd + (st.carry || 0)) },
             data: [[{ xAxis: lastEnd * 1000 }, { xAxis: p.end * 1000 }]] } : undefined,
           markLine: pts.length ? { silent: true, symbol: 'none', lineStyle: { color: '#10b981', type: 'dashed', width: 1.2 }, label: { show: false }, data: pts.map((x) => ({ xAxis: x.value[0] })) } : undefined },
         { name: '结算点', type: 'scatter', data: pts, symbolSize: 13, z: 10, itemStyle: { color: '#10b981', borderColor: t.card, borderWidth: 2 },
@@ -1849,11 +1858,12 @@
   }
 
   function upstreamAddModal(st, info, reload) {
-    const p = st.pending, sd = st.settled, set = st.settings;
+    const p = st.pending, sd = st.settled, set = st.settings, carry = st.carry || 0;
+    const pTot = p ? p.usd + carry : null;
     let mode = 'amount', jobId = null, res = null, seq = 0;
     const seg = h('div', { class: 'seg' });
-    const amt = h('input', { class: 'input mono', type: 'number', step: '0.01', min: '0', placeholder: p ? '例如 ' + Math.floor(p.usd) : '例如 3000' });
-    const cum = h('input', { class: 'input mono', type: 'number', step: '0.01', min: '0', placeholder: '例如 ' + Math.floor(sd.usd + (p ? p.usd : 0)) });
+    const amt = h('input', { class: 'input mono', type: 'number', step: '0.0001', min: '0', placeholder: p ? '例如 ' + Math.floor(pTot) : '例如 3000' });
+    const cum = h('input', { class: 'input mono', type: 'number', step: '0.0001', min: '0', placeholder: '例如 ' + Math.floor(sd.polo_usd + (p ? p.usd : 0)) });
     const tIn = h('input', { class: 'input mono', type: 'datetime-local', step: '1', value: toBjInput(Math.floor(Date.now() / 1000) - 300) });
     const findBtn = h('button', { class: 'btn btn-primary btn-sm', type: 'button' }, icon('search', 'icon icon-sm'), '查找达成时间');
     const inputBox = h('div'), resBox = h('div');
@@ -1864,9 +1874,10 @@
     [amt, cum, tIn].forEach((x) => x.addEventListener('input', reset));
     function paint() {
       clear(seg, [['amount', '按本次额度'], ['cumulative', '按累计额度'], ['time', '按时间']].map(([k, l]) => h('button', { type: 'button', class: mode === k ? 'on' : '', onclick: () => { mode = k; reset(); paint(); } }, l)));
-      const hint = mode === 'amount' ? `从 ${fmtSec(st.next_start)} 开始累计。目前待结算 ${p ? usd(p.usd) : '—'}（截至 ${p ? fmtSec(p.end) : '—'}）。`
-        : mode === 'cumulative' ? `从 ${fmtSec(set.up_start)} 起的累计额度。已结算 ${usd(sd.usd)}，目前累计约 ${usd(sd.usd + (p ? p.usd : 0))}。`
-          : `在 ${fmtSec(st.next_start)} 之后、现在前 2 分钟之前（北京时间，精确到秒）。`;
+      const cTxt = Math.abs(carry) >= 0.00005 ? (carry > 0 ? `；上次多出的 ${usd4(carry)} 会先抵掉` : `；上次少的 ${usd4(-carry)} 会先补上`) : '';
+      const hint = mode === 'amount' ? `从 ${fmtSec(st.next_start)} 开始累计${cTxt}。目前待结算 ${p ? usd(pTot) : '—'}（截至 ${p ? fmtSec(p.end) : '—'}）。记账就写你填的数。`
+        : mode === 'cumulative' ? `从 ${fmtSec(set.up_start)} 起的累计额度。已记账 ${usd4(sd.usd)}，目前累计约 ${usd(sd.polo_usd + (p ? p.usd : 0))}。记账 = 你填的数 − 已记账。`
+          : `在 ${fmtSec(st.next_start)} 之后、现在前 2 分钟之前（北京时间，精确到秒）。记账 = 这段 Polo 实际额度${Math.abs(carry) >= 0.00005 ? ' + 上次结转' : ''}。`;
       const label = mode === 'amount' ? '上家这次结算了多少额度（美元）' : mode === 'cumulative' ? '上家累计结算到多少额度（美元）' : '结算到哪个时间';
       clear(inputBox, field(label, h('div', { class: 'row', style: { gap: '8px' } }, mode === 'amount' ? amt : mode === 'cumulative' ? cum : tIn, findBtn), hint));
     }
@@ -1883,25 +1894,37 @@
         const out = await pollJob(r.job_id, (s, sec) => { status.lastChild.textContent = (s === 'queued' ? '排队中' : '正在向 Polo 查找达成的那一秒（按天 → 小时 → 分钟 → 秒）') + `… ${sec} 秒`; });
         if (my !== seq) return;
         jobId = r.job_id; res = out;
-        if (set.up_price && recv.value === '') { recv.value = r2(res.usd * set.up_price); recvCur.value = set.up_currency; }
-        const diff = res.diff !== null && res.diff !== undefined ? `（目标 ${usd4(res.need)}，实际多 ${usd4(res.diff)}，是跨过目标的那一条请求）` : '';
+        if (set.up_price && recv.value === '') { recv.value = r2(res.book_usd * set.up_price); recvCur.value = set.up_currency; }
+        const diff = res.need !== null && res.need !== undefined ? `；Polo 要跑到 ${usd4(res.need)}，跨过它的那一条请求多出 ${usd4(res.diff)}` : '';
+        const ca = res.carry_after;
+        const caTxt = Math.abs(ca) < 0.00005 ? '记账和 Polo 实际一致，没有结转。'
+          : ca > 0 ? `记账写 ${usd4(res.book_usd)}（上家的数），Polo 到这一秒比记账多 ${usd4(ca)}：这部分算进下一段待结算，下次结算时抵掉，不会丢也不会重复。`
+            : `记账写 ${usd4(res.book_usd)}（上家的数），比 Polo 到这一秒的实际多 ${usd4(-ca)}：下一段待结算会先扣掉这部分。`;
         const box = h('div', { hidden: true }, splitTable(res, info, null));
         const lbl = h('span', { text: '看每个号的额度' });
         clear(resBox,
           h('div', { class: 'reach' }, h('small', { text: mode === 'time' ? '结算到（北京时间）' : '达成时间（北京时间，精确到秒）' }),
             h('div', { class: 'reach-t', text: fmtSec(res.end) }),
-            h('div', { class: 'muted small', text: `这一段：${fmtSec(res.start)} → ${fmtSec(res.end)}，共 ${usd4(res.usd)}${diff}` })),
+            h('div', { class: 'muted small', text: `这一段：${fmtSec(res.start)} → ${fmtSec(res.end)}，Polo 实际 ${usd4(res.usd)}${diff}` })),
           h('div', { class: 'sum-chips' },
-            h('div', {}, h('small', { text: '这一段额度' }), h('b', { class: 'money-strong', text: usd(res.usd) })),
+            h('div', {}, h('small', { text: '记账额度（上家）' }), h('b', { class: 'money-strong', text: usd4(res.book_usd) })),
+            h('div', {}, h('small', { text: 'Polo 实际' }), h('b', { text: usd4(res.usd) })),
+            h('div', {}, h('small', { text: '结转到下一段' }), h('b', { class: Math.abs(ca) >= 0.00005 ? 'text-warn' : '', text: usd4(ca) })),
             h('div', {}, h('small', { text: '其中我的号' }), h('b', { text: usd(res.mine_usd) })),
             h('div', {}, h('small', { text: '其中成员号' }), h('b', { text: usd(res.members_usd) })),
-            h('div', {}, h('small', { text: '累计到这里' }), h('b', { text: usd(res.cumulative_before + res.usd) }))),
-          h('div', { style: { marginTop: '8px' } }, h('button', { class: 'btn btn-ghost btn-xs', type: 'button', onclick: () => { box.hidden = !box.hidden; lbl.textContent = box.hidden ? '看每个号的额度' : '收起'; } }, icon('down', 'icon icon-sm'), lbl), box));
+            h('div', {}, h('small', { text: '记账累计到这里' }), h('b', { text: usd4(res.settled_before + res.book_usd) }))),
+          h('p', { class: 'hint', style: { marginTop: '8px' }, text: caTxt }),
+          h('div', { style: { marginTop: '4px' } }, h('button', { class: 'btn btn-ghost btn-xs', type: 'button', onclick: () => { box.hidden = !box.hidden; lbl.textContent = box.hidden ? '看每个号的额度' : '收起'; } }, icon('down', 'icon icon-sm'), lbl), box));
       } catch (e) {
         if (my !== seq) return;
         let msg = errText(e);
-        if (e.code === 'not_reached' && e.body && e.body.total !== undefined) msg = `还没达到：从 ${fmtSec(st.next_start)} 到 ${fmtSec(e.body.cutoff)} 一共只有 ${usd(e.body.total)}。`;
-        if (e.code === 'below_settled' && e.body && e.body.settled !== undefined) msg += `（已结算累计 ${usd(e.body.settled)}）`;
+        const b = e.body || {};
+        if (e.code === 'not_reached' && b.total !== undefined) {
+          const c0 = b.carry || 0;
+          msg = mode === 'cumulative' ? `还没达到：到 ${fmtSec(b.cutoff)} 为止累计只有 ${usd4((b.polo_before || 0) + b.total)}。`
+            : `还没达到：从 ${fmtSec(st.next_start)} 到 ${fmtSec(b.cutoff)} 一共只有 ${usd4(b.total + c0)}${Math.abs(c0) >= 0.00005 ? `（Polo 新增 ${usd4(b.total)} ${c0 > 0 ? '+' : '−'} 上次结转 ${usd4(Math.abs(c0))}）` : ''}。`;
+        }
+        if (e.code === 'below_settled' && b.settled !== undefined) msg += `（已记账累计 ${usd4(b.settled)}）`;
         clear(resBox, h('div', { class: 'notice n-bad' }, icon('warning'), h('span', { text: msg })));
       } finally { findBtn.disabled = false; }
     });
@@ -1913,7 +1936,7 @@
         if (!res) { toast('先点“查找达成时间”', 'bad'); return false; }
         try {
           const r = await api('POST', '/admin/settle/up/commit', { job_id: jobId, received: recv.value === '' ? null : Number(recv.value), currency: recvCur.value, note: note.value });
-          toast(`已添加结算点：${usd(r.usd)}，达成于 ${fmtSec(r.end_at)}`, 'ok'); reload();
+          toast(`已添加结算点：记账 ${usd4(r.usd)}，达成于 ${fmtSec(r.end_at)}`, 'ok'); reload();
         } catch (e) { toast(errText(e), 'bad'); if (['stale_preview', 'preview_expired'].includes(e.code)) { reload(); return; } return false; }
       } }] });
   }
