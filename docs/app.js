@@ -5,7 +5,7 @@
   // ============================================================
   const API = 'https://notes.fuckingclaude.top:8446/polo';
   const SESSION_KEY = 'polo_session';
-  const S = { token: null, user: null, timers: [], dash: null, pending: null, pendingAt: 0, accountsCache: null, accountsAt: 0 };
+  const S = { token: null, user: null, timers: [], dash: null, pending: null, pendingAt: 0, accountsCache: null, accountsAt: 0, charts: [], onTheme: null };
   const ADMIN_RESOURCES = { accounts: '/v1/accounts', summary: '/v1/summary', usage: '/v1/usage', proxies: '/v1/proxies', archived: '/v1/archived-accounts', vendor: '/v1/vendor-usage' };
 
   // ============================================================
@@ -336,7 +336,10 @@
   // 路由
   // ============================================================
   function go(hash) { if (location.hash === hash) render(); else location.hash = hash; }
-  function stopTimers() { S.timers.forEach(clearInterval); S.timers = []; if (openMenu) openMenu(); }
+  function stopTimers() {
+    S.timers.forEach(clearInterval); S.timers = []; if (openMenu) openMenu();
+    S.onTheme = null; (S.charts || []).forEach((c) => { try { c.dispose(); } catch { /* ignore */ } }); S.charts = [];
+  }
   const isAdmin = () => S.user && S.user.role === 'admin';
 
   function render() {
@@ -354,6 +357,7 @@
       case '/archived': return pageArchived();
       case '/earnings': return pageEarnings();
       case '/admin/settle': return pageSettle(params);
+      case '/admin/stats': return pageStats();
       case '/admin/users': return pageUsers();
       case '/admin/invites': return pageInvites();
       case '/admin/logs': return pageLogs();
@@ -503,6 +507,7 @@
       h('div', { class: 'side-section', text: '概览' }),
       link('#/dashboard', 'chart', '用量看板'),
       link('#/archived', 'archive', '已归档'),
+      isAdmin() ? link('#/admin/stats', 'trend', '统计看板') : null,
       !isAdmin() ? link('#/earnings', 'dollar', '我的收益') : null,
       isAdmin() ? [
         h('div', { class: 'side-section', text: '管理' }),
@@ -1237,20 +1242,45 @@
   const usd = (n) => moneyFmt(n, '$');
   const cny = (n) => moneyFmt(n, '¥');
   const usd4 = (n) => (n === null || n === undefined ? '—' : '$' + Number(n).toFixed(4));
-  const r2 = (x) => Math.round(x * 100) / 100;
+  const r2 = (x) => Math.sign(x) * Math.round((Math.abs(x) + Number.EPSILON) * 100) / 100;
+  const usdtFmt = (n) => (n === null || n === undefined || isNaN(n) ? '—' : Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' USDT');
   Object.assign(ERR, {
     query_failed: 'Polo 查询失败（可能登录已失效，系统会自动重新登录），请稍后再试',
     query_timeout: 'Polo 查询超时，请稍后再试',
-    preview_expired: '结算预览已过期，请重新生成',
-    stale_preview: '这期间已经结算过一次，请重新生成',
-    preview_changed: '归属、分成或调整项有变动，请重新生成预览',
-    not_latest: '只能撤销最近一次结算',
-    already_paid: '这次结算有已付款的记录，先取消“已付款”再撤销',
-    first_start_locked: '已经结算过，首次结算起点不能再改',
+    preview_expired: '结算预览已过期，请重新点“结算”',
+    stale_preview: '这期间这位成员已经结算过或归属变了，请重新点“结算”',
+    preview_changed: '分成、成本或调整项有变动，请重新点“结算”',
+    not_latest: '只能撤销这位成员最近一张结算单',
+    already_paid: '这张结算单已标记付款，先取消“已付款”再撤销',
+    span_changed: '这个号的归属在结算之后变过，不能直接撤销',
+    nothing_to_settle: '这位成员上次结算之后还没有可以结算的部分',
+    bad_start: '起算时间不对：不能早于上一段归属或已结算到的时间，也不能是将来',
+    no_added_at: '没查到这个号加入 Polo 的时间，请选“从现在开始”或自定义时间',
+    rate_required: '选了 USDT 付款要填汇率',
+    rate_unavailable: '汇率暂时取不到，请手动填写',
+    range_too_long: '日期范围太长（最多 400 天）',
     too_many_jobs: '后台任务太多，请稍后再试',
     job_not_found: '任务已过期，请重试',
     bad_request: '输入不正确',
   });
+  // 用户显示名：管理员给的备注昵称优先
+  const USERS = new Map();
+  function rememberUsers(list) { for (const u of list || []) USERS.set(u.id, Object.assign(USERS.get(u.id) || {}, u)); }
+  const nameOf = (u) => (u ? u.nickname || u.username : '—');
+  const uname = (id, fb) => (USERS.has(id) ? nameOf(USERS.get(id)) : fb || '已删除用户');
+  function userName2(id, fb) {
+    const u = USERS.get(id);
+    if (!u) return h('b', { text: fb || '已删除用户' });
+    return h('span', { class: 'uname2' }, h('b', { text: nameOf(u) }), u.nickname ? h('small', { text: u.username }) : null);
+  }
+  const unameByLogin = (login) => { for (const u of USERS.values()) if (u.username === login) return nameOf(u); return login; };
+  // 北京时间
+  const bjToday = () => new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10);
+  const addDays = (day, n) => new Date(Date.parse(day + 'T00:00:00Z') + n * 86400000).toISOString().slice(0, 10);
+  const toBjInput = (ts) => new Date((ts + 8 * 3600) * 1000).toISOString().slice(0, 19);
+  const fromBjInput = (s) => { if (!s) return null; const t = Date.parse((s.length === 16 ? s + ':00' : s) + '+08:00'); return isNaN(t) ? null : Math.floor(t / 1000); };
+  const dayOfTs = (ts) => new Date((ts + 8 * 3600) * 1000).toISOString().slice(0, 10);
+
   const acctMap = (list) => Object.fromEntries((list || []).map((a) => [a.key, a]));
   function acctLabel(key, info, name) {
     const a = info[key];
@@ -1261,7 +1291,7 @@
       a && a.status === 'unknown' ? h('span', { class: 'chip chip-warn', style: { marginTop: '3px' }, text: '待确认邮箱' }) : null);
   }
   function rangeText(s, e) { return `${fmtSec(s)} → ${fmtSec(e)}`; }
-  function fmtSec(v) { const d = toDate(v); return isNaN(d) ? '—' : d.toLocaleString('sv-SE', { timeZone: 'Asia/Shanghai', hour12: false }); }
+  function fmtSec(v) { if (v === null || v === undefined) return '—'; const d = toDate(v); return isNaN(d) ? '—' : d.toLocaleString('sv-SE', { timeZone: 'Asia/Shanghai', hour12: false }); }
   async function pollJob(jid, onTick) {
     const t0 = Date.now();
     for (;;) {
@@ -1288,22 +1318,85 @@
     document.body.append(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
   }
   const shareTip = (s) => `我抽 ${s}% · 成员 ${r2(100 - s)}%`;
-  const dayStatus = (d) => (d.day === new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10) ? ['b-info', '今日实时'] : d.final ? ['b-ok', '已定稿'] : ['b-warn', '待定稿']);
+  const dayStatus = (d) => (d.day === bjToday() ? ['b-info', '今日实时'] : d.final ? ['b-ok', '已定稿'] : ['b-warn', '待定稿']);
+
+  // ---------- USDT 汇率与付款方式 ----------
+  const RATE_LABEL = { okx_c2c_buy: '欧易 C2C 买U价', okx_c2c_sell: '欧易 C2C 卖U价', binance_p2p_buy: '币安 P2P 买U价', coingecko: 'CoinGecko 市场价', forex: '美元外汇汇率', manual: '手动输入' };
+  const rateOf = (rates, src) => (rates && rates.sources && rates.sources[src || rates.default]) || null;
+  // init: { currency, rate, source, rate_at }：已有结算单的付款方式（改付款时用）
+  function payPicker(rates, getCny, init = {}) {
+    let cur = init.currency || localStorage.getItem('polo_pay_currency') || 'CNY';
+    let rs = rates || { sources: {} };
+    const seg = h('div', { class: 'seg' });
+    const srcSel = h('select', { class: 'select select-sm', style: { width: 'auto', maxWidth: '100%' } });
+    const rateIn = h('input', { class: 'input input-sm mono', type: 'number', step: '0.0001', min: '1', max: '20', style: { width: '110px' } });
+    const out = h('div', { class: 'pay-out' });
+    const refresh = h('button', { class: 'btn btn-ghost btn-xs', type: 'button' }, icon('refresh', 'icon icon-sm'), '刷新汇率');
+    const usdtBox = h('div', { class: 'pay-usdt' }, h('div', { class: 'row wrap', style: { gap: '8px' } }, srcSel, rateIn, h('span', { class: 'faint small', text: '¥ / USDT' }), refresh), out);
+    function fillSources(keep) {
+      const list = Object.entries(rs.sources || {});
+      const want = keep || (init.rate ? 'keep' : rs.default);
+      clear(srcSel,
+        init.rate ? h('option', { value: 'keep', text: `结算时的汇率 ${init.rate}（${RATE_LABEL[init.source] || '手动'}）`, selected: want === 'keep' }) : null,
+        list.map(([k, v]) => h('option', { value: k, text: `${RATE_LABEL[k] || k} ${v.rate}（${ago(v.at) || '刚刚'}）`, selected: k === want })),
+        h('option', { value: 'manual', text: '手动输入', selected: want === 'manual' || (!list.length && !init.rate) }));
+      syncRate();
+    }
+    function syncRate() {
+      if (srcSel.value === 'keep') rateIn.value = init.rate;
+      else { const x = rs.sources && rs.sources[srcSel.value]; if (x) rateIn.value = x.rate; }
+      paint();
+    }
+    function paint() {
+      clear(seg, [['CNY', '人民币'], ['USDT', 'USDT']].map(([k, l]) => h('button', { type: 'button', class: cur === k ? 'on' : '', onclick: () => { cur = k; localStorage.setItem('polo_pay_currency', k); paint(); } }, l)));
+      usdtBox.hidden = cur !== 'USDT';
+      const rate = Number(rateIn.value), c = getCny();
+      clear(out, rate >= 1 && rate <= 20 ? [h('span', { class: 'muted small', text: `${cny(c)} ÷ ${rate} = ` }), h('b', { class: 'money-strong', text: usdtFmt(r2(c / rate)) })]
+        : h('span', { class: 'text-warn small', text: '请填写汇率（1–20）' }));
+    }
+    srcSel.addEventListener('change', syncRate);
+    rateIn.addEventListener('input', () => {
+      const x = srcSel.value === 'keep' ? { rate: init.rate } : rs.sources && rs.sources[srcSel.value];
+      if (srcSel.value !== 'manual' && (!x || Number(rateIn.value) !== x.rate)) srcSel.value = 'manual';
+      paint();
+    });
+    refresh.addEventListener('click', async () => {
+      refresh.disabled = true;
+      try { await api('POST', '/admin/settle/rates-refresh'); await new Promise((r) => setTimeout(r, 4500)); rs = await api('GET', '/admin/settle/rates'); fillSources(srcSel.value === 'keep' ? 'keep' : srcSel.value); toast('汇率已刷新', 'ok'); }
+      catch (e) { toast(errText(e), 'bad'); }
+      refresh.disabled = false;
+    });
+    fillSources();
+    return {
+      el: h('div', { class: 'pay-box' }, h('div', { class: 'row wrap', style: { gap: '10px' } }, h('span', { class: 'label', text: '付款方式' }), seg), usdtBox),
+      get() {
+        if (cur !== 'USDT') return { pay_currency: 'CNY' };
+        const rate = Number(rateIn.value);
+        if (!(rate >= 1 && rate <= 20)) return null;
+        const src = srcSel.value;
+        if (src === 'keep') return { pay_currency: 'USDT', usdt_rate: init.rate, rate_source: init.source || 'manual', rate_at: init.rate_at || null };
+        const x = rs.sources && rs.sources[src];
+        return { pay_currency: 'USDT', usdt_rate: rate, rate_source: src, rate_at: src !== 'manual' && x ? x.at : Math.floor(Date.now() / 1000) };
+      },
+    };
+  }
+  const payText = (s) => (s.pay_currency === 'USDT' && s.usdt_amount !== null && s.usdt_amount !== undefined ? `${usdtFmt(s.usdt_amount)} · 汇率 ${s.usdt_rate}` : '');
 
   // ============================================================
   // 结算（管理员）
   // ============================================================
   async function pageSettle(params) {
-    const tab = ['pending', 'history', 'daily', 'settings'].includes(params.get('tab')) ? params.get('tab') : 'pending';
-    const { main } = appLayout({ active: '#/admin/settle', title: '结算', desc: '成员账号的额度贡献、结算单与每日统计' });
-    const tabs = h('div', { class: 'tabs' }, [['pending', '待结算', 'dollar'], ['history', '结算记录', 'log'], ['daily', '每日统计', 'chart'], ['settings', '归属与设置', 'cog']]
-      .map(([k, l, ic]) => h('a', { class: 'btn btn-sm ' + (k === tab ? 'btn-primary' : 'btn-secondary'), href: '#/admin/settle?tab=' + k, style: { textDecoration: 'none' } }, icon(ic, 'icon icon-sm'), l)));
+    if (params.get('tab') === 'daily') return go('#/admin/stats');
+    const tab = ['pending', 'history', 'settings'].includes(params.get('tab')) ? params.get('tab') : 'pending';
+    const { main } = appLayout({ active: '#/admin/settle', title: '结算', desc: '按成员结算：点谁的“结算”，就给谁结到现在' });
+    const tabs = h('div', { class: 'tabs' }, [['pending', '待结算', 'dollar'], ['history', '结算记录', 'log'], ['settings', '归属与设置', 'cog']]
+      .map(([k, l, ic]) => h('a', { class: 'btn btn-sm ' + (k === tab ? 'btn-primary' : 'btn-secondary'), href: '#/admin/settle?tab=' + k, style: { textDecoration: 'none' } }, icon(ic, 'icon icon-sm'), l)),
+      h('a', { class: 'btn btn-sm btn-ghost', href: '#/admin/stats', style: { textDecoration: 'none' } }, icon('chart', 'icon icon-sm'), '统计看板'));
     const body = h('div', {}, h('div', { class: 'stats' }, skeletonStats(4)));
     append(main, tabs, body);
     try {
       if (tab === 'pending') await settlePending(body);
       else if (tab === 'history') await settleHistory(body);
-      else if (tab === 'daily') await settleDaily(body);
       else await settleSettings(body);
     } catch (e) { clear(body, emptyState(errText(e), 'warning')); }
   }
@@ -1318,9 +1411,8 @@
     i1.style.width = a + '%'; i2.style.width = b + '%';
     return h('div', { class: 'rbar', title: `已回本 ${cny(done)}${pend ? ` · 本期再回 ${cny(pend)}` : ''} / 成本 ${cny(total)}` }, i1, i2);
   }
-  // 结算单 / 预估里某位成员这一期的回本情况
   function lineRecovery(L) {
-    if (!L.cost_total_cny) return null;
+    if (!L || !L.cost_total_cny) return null;
     const txt = L.remaining_cny > 0
       ? `回本中：成本 ${cny(L.cost_total_cny)} · 之前已回 ${cny(L.recovered_before_cny)} · 本次回 ${cny(L.recover_cny)} · 还差 ${cny(L.remaining_cny)}`
       : `已回本（成本 ${cny(L.cost_total_cny)}${L.recover_cny ? `，本次回 ${cny(L.recover_cny)}` : ''}）`;
@@ -1338,7 +1430,7 @@
           h('button', { class: 'btn btn-ghost btn-xs', type: 'button', onclick: () => waiveCharge(x, reload) }, x.waived ? '恢复' : '免除')) : state;
         return h('tr', { class: x.waived ? 'faint' : '' }, h('td', { class: 'nowrap', text: x.due_day }),
           h('td', {}, h('b', { text: x.name || x.account_key }), x.email ? h('div', { class: 'email mono', text: x.email }) : null,
-            admin && x.username ? h('div', { class: 'faint xs', text: '记在 ' + x.username + ' 名下' }) : null),
+            admin ? h('div', { class: 'faint xs', text: '记在 ' + uname(x.user_id, x.username) + ' 名下' }) : null),
           h('td', { text: KIND[x.kind] || x.kind }), h('td', { text: SEAT_CN[x.seat] || '—' }), h('td', { class: 'num' }, amount), h('td', {}, ops));
       }))));
   }
@@ -1371,7 +1463,7 @@
     for (const m of ms) {
       const exp = h('tr', { class: 'exp-row', hidden: true }, h('td', { colspan: '7' }, chargesTable(costs.charges.filter((x) => x.user_id === m.user_id), { admin: true, reload })));
       const tr = h('tr', { class: 'click', onclick: () => { exp.hidden = !exp.hidden; tr.classList.toggle('open', !exp.hidden); } },
-        h('td', { 'data-label': '' }, h('b', { text: m.username || '—' }), m.pending_seat ? h('div', { class: 'text-warn xs', text: `${m.pending_seat} 笔成本待定（未标席位）` }) : h('div', { class: 'faint xs', text: '点击看成本记录' })),
+        h('td', { 'data-label': '' }, userName2(m.user_id, m.username), m.pending_seat ? h('div', { class: 'text-warn xs', text: `${m.pending_seat} 笔成本待定（未标席位）` }) : h('div', { class: 'faint xs', text: '点击看成本记录' })),
         h('td', { 'data-label': '进度', style: { minWidth: '150px' } }, recoveryBar(m.cost_total_cny, m.recovered_cny, m.pending_recover_cny)),
         h('td', { 'data-label': '成本合计', class: 'num' }, cny(m.cost_total_cny)),
         h('td', { 'data-label': '已回本', class: 'num' }, cny(m.recovered_cny)),
@@ -1384,98 +1476,155 @@
       h('div', { class: 'card-head' }, h('h3', { class: 'card-title' }, icon('trend'), '回本进度'), h('span', { class: 'faint xs', text: '成员名下号的成本（开号 + 每月续费）回本前，收入全归成员、不分成' })),
       h('div', { class: 'table-wrap' }, h('table', { class: 'table responsive' }, h('thead', {}, h('tr', {}, ['成员', '进度', '成本合计', '已回本', '本期预估回本', '还差', ''].map((t) => h('th', { text: t })))), tbody)));
   }
+  // 账号 + 各自的结算区间
+  function windowsTable(items, info) {
+    if (!items.length) return h('div', { class: 'muted small', text: '没有账号额度（只有调整项）' });
+    return h('div', { class: 'charges-wrap' }, h('table', { class: 'mini-table' },
+      h('thead', {}, h('tr', {}, ['账号', '结算区间（北京时间）', '额度', '请求', 'Token'].map((t) => h('th', { text: t })))),
+      h('tbody', {}, items.map((i) => {
+        const s = i.start !== undefined ? i.start : i.start_at, e = i.end !== undefined ? i.end : i.end_at;
+        return h('tr', {}, h('td', {}, acctLabel(i.account_key || i.key, info, i.name)),
+          h('td', { class: 'small nowrap' }, s ? [h('div', { text: fmtSec(s) }), h('div', { class: 'faint', text: '→ ' + fmtSec(e) })] : '—'),
+          h('td', { class: 'num', title: usd4(i.usd) }, usd(i.usd)), h('td', { class: 'num' }, compact(i.requests)), h('td', { class: 'num' }, compact(i.tokens)));
+      }))));
+  }
 
+  // ---------- 待结算：每位成员一张卡片 ----------
   async function settlePending(body) {
-    const st = await api('GET', '/admin/settle/state');
-    const info = acctMap(st.accounts), c = st.calc;
+    const [st, list] = await Promise.all([api('GET', '/admin/settle/state'), api('GET', '/admin/settle/list')]);
+    rememberUsers(st.users);
+    const info = acctMap(st.accounts);
     const reload = () => settlePending(body);
-    const list = [];
-    if (st.query.last_error) list.push(['n-warn', 'warning', `最近一次 Polo 查询失败（${st.query.last_error}，${ago(st.query.last_error_at) || ''}），数据可能不是最新的。`]);
-    if (!st.accounts.some((a) => a.owner)) list.push(['n-info', 'info', '还没有设置账号归属：现在所有账号都算你自己的，不会给成员结算。请到“归属与设置”里设置。']);
+    const sts = list.settlements.filter((s) => s.status === 'active');
+    const unpaidBy = {};
+    for (const s of sts) for (const L of s.lines) if (!L.paid_at) unpaidBy[L.user_id] = r2((unpaidBy[L.user_id] || 0) + L.member_cny);
+    const notes = [];
+    if (st.query.last_error) notes.push(['n-warn', 'warning', `最近一次 Polo 查询失败（${st.query.last_error}，${ago(st.query.last_error_at) || ''}），预估可能不是最新的。`]);
+    if (!st.spans.length) notes.push(['n-info', 'info', '还没有设置账号归属：现在所有账号都算你自己的。请到“归属与设置”里把成员的号归给他们。']);
+    const um = (st.pending && st.pending.unmatched) || [];
     const unknown = st.accounts.filter((a) => a.status === 'unknown');
-    if (unknown.length) list.push(['n-warn', 'warning', `有 ${unknown.length} 个账号没能自动对应到邮箱：${unknown.map((a) => a.name).join('、')}。请到“归属与设置”里手动指定。`]);
+    if (um.length) notes.push(['n-warn', 'warning', `有 ${um.length} 个 Polo 账号没能对应到邮箱（${um.map((x) => `${x.name} ${usd(x.usd)}`).join('、')}），它们的额度不会算给任何成员。请到“归属与设置”里指定邮箱。`]);
+    else if (unknown.length) notes.push(['n-warn', 'warning', `有 ${unknown.length} 个账号没能自动对应到邮箱：${unknown.map((a) => a.name).join('、')}。请到“归属与设置”里手动指定。`]);
     const seatWait = st.costs.members.filter((m) => m.pending_seat);
-    if (seatWait.length) list.push(['n-warn', 'warning', `${seatWait.map((m) => `${m.username}（${m.pending_seat} 笔）`).join('、')} 的成本因为账号没标席位还没定金额，暂按 ¥0 算。请到“用量看板”给这些号标上高级 / 标准。`]);
-    if (c) { const lost = c.items.filter((i) => i.user_id == null && i.usd > 0); if (lost.length && st.accounts.some((a) => a.owner)) list.push(['n-info', 'info', `本期有 ${lost.length} 个未归属的账号产生了额度（${usd(c.unowned_usd)}），这部分算你自己的。`]); }
-    const notes = h('div', {}, list.map(([k, i, t]) => h('div', { class: 'notice ' + k }, icon(i), h('span', { text: t }))));
-
+    if (seatWait.length) notes.push(['n-warn', 'warning', `${seatWait.map((m) => `${uname(m.user_id, m.username)}（${m.pending_seat} 笔）`).join('、')} 的成本因为账号没标席位还没定金额，暂按 ¥0 算。请到“用量看板”给这些号标上高级 / 标准。`]);
+    const ms = st.members.filter((m) => m.open_accounts.length || m.closed_unsettled || m.line.adjust_usd || m.line.usd > 0 || unpaidBy[m.user_id]);
+    const valid = ms.filter((m) => m.valid);
+    const tot = (f) => r2(valid.reduce((a, m) => a + m.line[f], 0));
+    const rate = rateOf(st.rates);
+    const unpaidAll = r2(Object.values(unpaidBy).reduce((a, x) => a + x, 0));
+    const todaySts = sts.filter((s) => dayOfTs(s.created_at) === bjToday());
     const stats = h('div', { class: 'stats' },
-      statCard('本期额度', c ? usd(c.total_usd) : '—', 'dollar', 'blue', c ? `成员号 ${usd(c.owned_usd)} · 自有号 ${usd(c.unowned_usd)}` : '预估未就绪'),
-      statCard('应付成员', c ? cny(c.member_cny) : '—', 'users', 'purple', c ? `${c.lines.length} 位成员${c.recover_cny ? ` · 其中回本 ${cny(c.recover_cny)}（不分成）` : ''}` : null),
-      statCard('我的收入', c ? cny(c.admin_cny) : '—', 'trend', 'ok', c ? `抽成 ${cny(r2(c.admin_cny - c.unowned_cny))} + 自有号 ${cny(c.unowned_cny)}` : null),
-      statCard('上次结算', st.last ? ago(st.last.created_at) : '尚未结算', 'clock', 'cyan', st.last ? `截至 ${fmtSec(st.last.end_at)}` : `首次从 ${fmtSec(st.settings.first_start)} 算起`));
-
+      statCard('待结算合计（预估）', cny(tot('member_cny')), 'users', 'purple', `${ms.length} 位成员${tot('recover_cny') ? ` · 其中回本 ${cny(tot('recover_cny'))}` : ''}${rate && tot('member_cny') ? ` · ≈ ${usdtFmt(r2(tot('member_cny') / rate.rate))}` : ''}`),
+      statCard('我的抽成（预估）', cny(tot('admin_cny')), 'trend', 'ok', `成员号额度 ${usd(valid.reduce((a, m) => a + m.line.usd, 0))}`),
+      statCard('未付款', cny(unpaidAll), 'clock', unpaidAll > 0 ? 'warn' : 'ok', `今天已结算 ${todaySts.length} 次 · ${cny(r2(todaySts.reduce((a, s) => a + s.member_cny, 0)))}`),
+      statCard('USDT 汇率', rate ? `¥${rate.rate}` : '—', 'globe', 'cyan', rate ? `${RATE_LABEL[st.rates.default] || ''} · ${ago(rate.at) || '刚刚'}` : '暂时取不到，结算时可手动填'));
     const refreshBtn = h('button', { class: 'btn btn-secondary btn-sm', type: 'button' }, icon('refresh', 'icon icon-sm'), '刷新预估');
-    const settleBtn = h('button', { class: 'btn btn-primary btn-sm', type: 'button' }, icon('check', 'icon icon-sm'), '生成结算单');
     refreshBtn.addEventListener('click', async () => {
       refreshBtn.disabled = true; clear(refreshBtn, icon('refresh', 'icon icon-sm spin'), '正在向 Polo 查询…');
       try { const { job_id } = await api('POST', '/admin/settle/refresh'); await pollJob(job_id); toast('已刷新', 'ok'); await reload(); }
       catch (e) { toast(errText(e), 'bad'); refreshBtn.disabled = false; clear(refreshBtn, icon('refresh', 'icon icon-sm'), '刷新预估'); }
     });
-    settleBtn.addEventListener('click', () => settlePreview(() => go('#/admin/settle?tab=history')));
-    const period = h('div', { class: 'card', style: { marginBottom: '16px' } }, h('div', { class: 'card-body period' },
-      h('div', {}, h('div', { class: 'muted small', text: '本期结算区间（北京时间）' }),
-        h('div', { class: 'period-range' }, h('b', { text: fmtSec(st.start) }), ' → ', h('b', { text: st.pending ? fmtSec(st.pending.end) : '现在' }), h('span', { class: 'faint small', text: st.pending ? `（预估于 ${ago(st.pending.at)}查询，每 15 分钟自动刷新）` : '（预估生成中）' })),
-        h('div', { class: 'hint', text: `点“生成结算单”会向 Polo 精确查询到点击时间前 ${Math.round(st.cutoff_lag / 60)} 分钟，确认后下一期从截止时间的下一秒开始。一天可以结算多次。` })),
-      h('div', { class: 'toolbar' }, refreshBtn, settleBtn)));
-
-    const COLS = ['成员', '分成', '额度', '调整', '毛收入', '回本·不分成', '应付成员', '我的抽成', ''];
-    const tbody = h('tbody');
-    const lines = c ? c.lines : [];
-    for (const L of lines) {
-      const items = c.items.filter((i) => i.user_id === L.user_id);
-      const exp = h('tr', { class: 'exp-row', hidden: true }, h('td', { colspan: String(COLS.length) }, itemsTable(items, info)));
-      const tr = h('tr', { class: 'click', onclick: () => { exp.hidden = !exp.hidden; tr.classList.toggle('open', !exp.hidden); } },
-        h('td', { 'data-label': '' }, h('b', { text: L.username }), L.status !== 'active' ? h('span', { class: 'chip', style: { marginLeft: '6px' }, text: '已停用' }) : null,
-          h('div', { class: 'faint xs', text: `${L.accounts} 个号 · 点击展开` }), lineRecovery(L)),
-        h('td', { 'data-label': '分成' }, h('span', { class: 'chip', text: shareTip(L.admin_share) }), L.remaining_cny > 0 ? h('div', { class: 'text-warn xs', style: { marginTop: '3px' }, text: '回本中，暂不抽成' }) : null),
-        h('td', { 'data-label': '额度', class: 'num', title: usd4(L.usd) }, usd(L.usd)),
-        h('td', { 'data-label': '调整', class: 'num ' + (L.adjust_usd ? (L.adjust_usd > 0 ? 'text-ok' : 'text-bad') : 'faint') }, L.adjust_usd ? usd(L.adjust_usd) : '—'),
-        h('td', { 'data-label': '毛收入', class: 'num' }, cny(L.gross_cny)),
-        h('td', { 'data-label': '回本·不分成', class: 'num ' + (L.recover_cny ? 'text-warn' : 'faint') }, L.recover_cny ? cny(L.recover_cny) : '—'),
-        h('td', { 'data-label': '应付成员', class: 'num money-strong' }, cny(L.member_cny)),
-        h('td', { 'data-label': '我的抽成', class: 'num' }, cny(L.admin_cny)),
-        h('td', { 'data-label': '', class: 'faint' }, icon('down', 'icon icon-sm chev')));
-      append(tbody, tr, exp);
-    }
-    if (c && c.unowned_usd > 0) {
-      const items = c.items.filter((i) => i.user_id == null);
-      const exp = h('tr', { class: 'exp-row', hidden: true }, h('td', { colspan: String(COLS.length) }, itemsTable(items, info)));
-      const tr = h('tr', { class: 'click muted-row', onclick: () => { exp.hidden = !exp.hidden; tr.classList.toggle('open', !exp.hidden); } },
-        h('td', { 'data-label': '' }, h('b', { text: '未归属（你自己的号）' }), h('div', { class: 'faint xs', text: `${items.length} 个号 · 点击展开` })),
-        h('td', { 'data-label': '分成' }, h('span', { class: 'chip', text: '全部归你' })),
-        h('td', { 'data-label': '额度', class: 'num' }, usd(c.unowned_usd)), h('td', { class: 'faint' }, '—'),
-        h('td', { 'data-label': '毛收入', class: 'num' }, cny(c.unowned_cny)), h('td', { class: 'faint' }, '—'), h('td', { class: 'faint' }, '—'),
-        h('td', { 'data-label': '我的收入', class: 'num' }, cny(c.unowned_cny)), h('td', { class: 'faint' }, icon('down', 'icon icon-sm chev')));
-      append(tbody, tr, exp);
-    }
-    if (!tbody.children.length) tbody.append(h('tr', {}, h('td', { colspan: String(COLS.length) }, emptyState(c ? '本期还没有产生额度' : '正在生成预估，稍后点“刷新预估”', 'dollar'))));
-    const table = h('div', { class: 'card' },
-      h('div', { class: 'card-head' }, h('h2', { class: 'card-title' }, icon('users'), '本期各成员应付（预估）'), c ? h('span', { class: 'muted small', text: `汇率 ¥${c.rate}/$ · 默认${shareTip(c.default_share)} · 回本前不抽成` }) : null),
-      h('div', { class: 'table-wrap' }, h('table', { class: 'table responsive' },
-        h('thead', {}, h('tr', {}, COLS.map((t) => h('th', { text: t })))), tbody,
-        c && lines.length ? h('tfoot', {}, h('tr', {}, h('td', { text: '合计' }), h('td'), h('td', { class: 'num', text: usd(c.total_usd) }), h('td', { class: 'num', text: c.adjust_usd ? usd(c.adjust_usd) : '—' }),
-          h('td', { class: 'num', text: cny(c.gross_cny) }), h('td', { class: 'num', text: c.recover_cny ? cny(c.recover_cny) : '—' }), h('td', { class: 'num money-strong', text: cny(c.member_cny) }),
-          h('td', { class: 'num', text: cny(c.admin_cny) }), h('td'))) : null)));
-    clear(body, notes, stats, period, table, recoveryCard(st.costs, reload), adjustmentsCard(st, reload));
+    const head = h('div', { class: 'card', style: { marginBottom: '16px' } }, h('div', { class: 'card-body period' },
+      h('div', {}, h('b', { text: '怎么结算' }),
+        h('div', { class: 'hint', text: `点某位成员的“结算”，系统会向 Polo 精确查询他名下每个号从上次结算点到点击时间前 ${Math.round(st.cutoff_lag / 60)} 分钟的额度，算出应付多少人民币（可换成 USDT）；确认后自动写入结算点，下次从下一秒接着算。一天可以结算多次，不会重复、不会漏。` }),
+        h('div', { class: 'faint xs', style: { marginTop: '4px' }, text: st.pending ? `卡片上的金额是预估（${ago(st.pending.at)}查询，每 15 分钟自动更新）${st.refreshing ? '，正在更新…' : ''}` : '预估生成中…' })),
+      h('div', { class: 'toolbar' }, refreshBtn)));
+    const grid = ms.length ? h('div', { class: 'mgrid' }, ms.map((m, i) => { const c = memberCard(m, st, info, unpaidBy[m.user_id], rate, reload); c.style.animationDelay = i * 40 + 'ms'; return c; }))
+      : h('div', { class: 'card' }, h('div', { class: 'card-body' }, emptyState('还没有成员名下有账号。到“归属与设置”里设置账号归属后，这里会出现每位成员的结算卡片。', 'users')));
+    clear(body, notes.map(([k, i, t]) => h('div', { class: 'notice ' + k }, icon(i), h('span', { text: t }))), stats, head, grid, recoveryCard(st.costs, reload), adjustmentsCard(st, reload));
   }
 
-  function itemsTable(items, info) {
-    if (!items.length) return h('div', { class: 'muted small', text: '没有账号额度（只有调整项）' });
-    return h('table', { class: 'mini-table' },
-      h('thead', {}, h('tr', {}, ['账号', '额度', '请求', 'Token'].map((t) => h('th', { text: t })))),
-      h('tbody', {}, items.map((i) => h('tr', {}, h('td', {}, acctLabel(i.key || i.account_key, info, i.name)), h('td', { class: 'num', title: usd4(i.usd) }, usd(i.usd)),
-        h('td', { class: 'num' }, compact(i.requests)), h('td', { class: 'num' }, compact(i.tokens))))));
+  function memberCard(m, st, info, unpaid, rate, reload) {
+    const L = m.line;
+    const btn = h('button', { class: 'btn btn-primary btn-sm', type: 'button' }, icon('check', 'icon icon-sm'), '结算');
+    btn.addEventListener('click', () => settlePreview(m, st, reload));
+    const last = m.last ? `上次结算 ${ago(m.last.created_at)}（截至 ${fmtSec(m.last.end_at).slice(5)}）` : '还没结算过';
+    const amt = (label, v, cls) => h('div', { class: 'mc-amt' }, h('small', { text: label }), h('b', { class: cls || '', text: v }));
+    const parts = m.valid ? [
+      h('div', { class: 'mc-range', text: m.start ? `待结算 ${fmtSec(m.start)} → ${fmtSec(m.cutoff)}` : '暂时没有待结算的时间段' }),
+      h('div', { class: 'mc-amts' }, amt('额度', usd(r2(L.usd + L.adjust_usd))), amt('毛收入', cny(L.gross_cny)),
+        amt('回本·不分成', L.recover_cny ? cny(L.recover_cny) : '—', L.recover_cny ? 'text-warn' : 'faint'), amt('我的抽成', cny(L.admin_cny))),
+      h('div', { class: 'mc-pay' }, h('div', {}, h('small', { text: '应付（预估）' }), h('div', { class: 'mc-big', text: cny(L.member_cny) })),
+        rate && L.member_cny ? h('div', { class: 'mc-usdt', text: `≈ ${usdtFmt(r2(L.member_cny / rate.rate))}` }) : null),
+      lineRecovery(L),
+    ] : [h('div', { class: 'loading-box small' }, icon('refresh', 'icon icon-sm spin'), h('span', { text: '预估更新中；点“结算”会直接精确查询' }))];
+    const chips = [unpaid ? h('span', { class: 'chip chip-warn', text: `还有 ${cny(unpaid)} 没付` }) : null,
+      L.status !== 'active' ? h('span', { class: 'chip', text: '已停用' }) : null,
+      L.adjust_usd ? h('span', { class: 'chip', text: `调整 ${usd(L.adjust_usd)}` }) : null,
+      m.closed_unsettled ? h('span', { class: 'chip', text: `${m.closed_unsettled} 个转走的号还有没结的部分` }) : null].filter(Boolean);
+    let details = null;
+    if (m.valid && m.items.length) {
+      const box = h('div', { class: 'mc-items', hidden: true }, windowsTable(m.items, info));
+      const lbl = h('span', { text: `${m.items.length} 个号的明细` });
+      const t = h('button', { class: 'btn btn-ghost btn-xs', type: 'button', onclick: () => { box.hidden = !box.hidden; lbl.textContent = box.hidden ? `${m.items.length} 个号的明细` : '收起'; } }, icon('down', 'icon icon-sm'), lbl);
+      details = h('div', {}, t, box);
+    }
+    return h('div', { class: 'card mcard' },
+      h('div', { class: 'mc-head' }, h('span', { class: 'avatar', text: uname(m.user_id).slice(0, 1) }),
+        h('div', { class: 'grow', style: { minWidth: 0 } }, userName2(m.user_id, L.username), h('div', { class: 'faint xs', text: `${m.open_accounts.length} 个号 · ${shareTip(L.admin_share)} · ${last}` })), btn),
+      parts, chips.length ? h('div', { class: 'chips' }, chips) : null, details);
+  }
+
+  function settlePreview(m, st, done) {
+    const who = uname(m.user_id, m.line.username);
+    const status = h('div', { class: 'loading-box' }, icon('refresh', 'icon spin'), h('span', { text: `正在向 Polo 精确查询 ${who} 的额度…` }));
+    const box = h('div', {}, status);
+    let jobId = null, res = null, pay = null;
+    const note = h('input', { class: 'input', maxlength: '200', placeholder: '结算备注（可选，只有管理员能看到）' });
+    const markPaid = h('input', { type: 'checkbox' });
+    const paidNote = h('input', { class: 'input input-sm', maxlength: '200', placeholder: '付款备注：例如 微信 / 支付宝 / 交易哈希（可选）', hidden: true });
+    markPaid.addEventListener('change', () => { paidNote.hidden = !markPaid.checked; });
+    modal({ title: `结算 · ${who}`, body: box, wide: true, actions: [{ label: '取消' }, { label: '确认结算', kind: 'btn-primary', onClick: async () => {
+      if (!res) return false;
+      const p = pay.get();
+      if (!p) { toast('请填写 USDT 汇率', 'bad'); return false; }
+      try {
+        const r = await api('POST', '/admin/settle/commit', Object.assign({ job_id: jobId, expect_member_cny: res.line.member_cny, note: note.value }, p));
+        if (markPaid.checked) {
+          try { await api('POST', '/admin/settle/paid/' + r.line_id, Object.assign({ paid: true, note: paidNote.value }, p)); }
+          catch (e) { toast('结算单已生成，但标记付款失败：' + errText(e), 'bad'); }
+        }
+        toast(`已生成结算单 #${r.id}：应付 ${who} ${cny(r.member_cny)}${r.usdt_amount ? `（${usdtFmt(r.usdt_amount)}）` : ''}`, 'ok');
+        done();
+      } catch (e) {
+        toast(errText(e), 'bad');
+        if (['stale_preview', 'preview_changed', 'preview_expired'].includes(e.code)) { done(); return; }
+        return false;
+      }
+    } }] });
+    (async () => {
+      try {
+        const r = await api('POST', '/admin/settle/preview', { user_id: m.user_id }); jobId = r.job_id;
+        res = await pollJob(jobId, (s, sec) => { status.lastChild.textContent = (s === 'queued' ? '排队中' : `正在向 Polo 精确查询 ${who} 的额度`) + `… ${sec} 秒`; });
+        const L = res.line;
+        pay = payPicker(res.rates, () => L.member_cny);
+        const step = (label, val, cls, sub) => h('div', { class: 'calc-row' + (cls ? ' ' + cls : '') }, h('div', {}, h('span', { text: label }), sub ? h('small', { text: sub }) : null), h('b', { text: val }));
+        clear(box,
+          h('div', { class: 'notice n-info' }, icon('clock'), h('span', {}, '结算截止 ', h('b', { text: fmtSec(res.cutoff) }), `（点击时间前 2 分钟，北京时间）。确认后 ${who} 名下每个号的结算点都写到这一秒，下次从下一秒开始。`)),
+          windowsTable(res.items, acctMap(st.accounts)),
+          res.unmatched && res.unmatched.length ? h('div', { class: 'notice n-warn', style: { marginTop: '10px' } }, icon('warning'), h('span', { text: `注意：有 ${res.unmatched.length} 个 Polo 账号没对应到邮箱，不计入任何成员。` })) : null,
+          h('div', { class: 'calc' },
+            step('额度', usd4(L.usd + L.adjust_usd), '', L.adjust_usd ? `账号 ${usd4(L.usd)} + 调整 ${usd(L.adjust_usd)}` : null),
+            step(`× 汇率 ¥${L.rate}/$ = 毛收入`, cny(L.gross_cny)),
+            L.cost_total_cny ? step('其中回本（全归成员、不分成）', cny(L.recover_cny), 'warn', `成本 ${cny(L.cost_total_cny)} · 之前已回 ${cny(L.recovered_before_cny)} · 这次回完还差 ${cny(L.remaining_cny)}`) : null,
+            step(`参与分成 ${cny(L.shared_cny)} × 我抽 ${L.admin_share}% = 我的抽成`, cny(L.admin_cny)),
+            step('应付成员 = 毛收入 − 我的抽成', cny(L.member_cny), 'total')),
+          pay.el,
+          h('label', { class: 'check', style: { margin: '12px 0 6px' } }, markPaid, h('span', { text: '已经付过款了，直接标记为“已付款”' })),
+          paidNote, h('div', { style: { marginTop: '8px' } }, note),
+          h('p', { class: 'hint', text: '预览 30 分钟内有效。点错了可以在“结算记录”里撤销这位成员最近一张（未付款时），结算点会退回原处。' }));
+      } catch (e) { clear(box, h('div', { class: 'notice n-bad' }, icon('warning'), h('span', { text: errText(e) }))); }
+    })();
   }
 
   function adjustmentsCard(st, reload) {
     const members = st.users.filter((u) => u.role === 'user');
     const add = h('button', { class: 'btn btn-secondary btn-sm', type: 'button' }, icon('plus', 'icon icon-sm'), '添加调整');
     add.addEventListener('click', () => {
-      const who = h('select', { class: 'select' }, members.map((u) => h('option', { value: u.id, text: u.username })));
+      const who = h('select', { class: 'select' }, members.map((u) => h('option', { value: u.id, text: nameOf(u) + (u.nickname ? `（${u.username}）` : '') })));
       const amt = h('input', { class: 'input', type: 'number', step: '0.01', placeholder: '例如 5 或 -3.5' });
       const note = h('input', { class: 'input', maxlength: '100', placeholder: '例如：补偿 11-21 停机损失' });
-      modal({ title: '添加调整项', body: h('div', {}, field('成员', who), field('金额（美元）', amt, '正数补给成员，负数扣除；按汇率换算成人民币，和额度一样先回本、再分成，计入下一次结算。'), field('原因', note)),
+      modal({ title: '添加调整项', body: h('div', {}, field('成员', who), field('金额（美元）', amt, '正数补给成员，负数扣除；按汇率换算成人民币，和额度一样先回本、再分成，计入这位成员的下一次结算。'), field('原因', note)),
         actions: [{ label: '取消' }, { label: '添加', kind: 'btn-primary', onClick: async () => {
           try { await api('POST', '/admin/settle/adjust', { user_id: Number(who.value), usd: Number(amt.value), note: note.value }); toast('已添加', 'ok'); reload(); }
           catch (e) { toast(errText(e), 'bad'); return false; }
@@ -1484,201 +1633,155 @@
     if (!members.length) add.disabled = true;
     const rows = st.adjustments;
     return h('div', { class: 'card', style: { marginTop: '16px' } },
-      h('div', { class: 'card-head' }, h('h3', { class: 'card-title' }, icon('plus'), '调整项', h('span', { class: 'faint xs', style: { fontWeight: 400 }, text: '计入下一次结算' })), add),
+      h('div', { class: 'card-head' }, h('h3', { class: 'card-title' }, icon('plus'), '调整项', h('span', { class: 'faint xs', style: { fontWeight: 400 }, text: '计入这位成员的下一次结算' })), add),
       rows.length ? h('div', { class: 'table-wrap' }, h('table', { class: 'table' },
         h('thead', {}, h('tr', {}, ['成员', '金额', '原因', '添加', ''].map((t) => h('th', { text: t })))),
-        h('tbody', {}, rows.map((a) => h('tr', {}, h('td', { text: a.username || '—' }), h('td', { class: 'num ' + (a.usd > 0 ? 'text-ok' : 'text-bad'), text: usd(a.usd) }), h('td', { text: a.note }),
+        h('tbody', {}, rows.map((a) => h('tr', {}, h('td', {}, userName2(a.user_id, a.username)), h('td', { class: 'num ' + (a.usd > 0 ? 'text-ok' : 'text-bad'), text: usd(a.usd) }), h('td', { text: a.note }),
           h('td', { class: 'small faint', text: `${a.created_by || ''} · ${ago(a.created_at)}` }),
           h('td', {}, h('button', { class: 'btn btn-ghost btn-xs', type: 'button', onclick: async () => {
-            if (!(await confirmBox('删除调整项', `删除给 ${a.username} 的 ${usd(a.usd)}（${a.note}）？`, { danger: true, okText: '删除' }))) return;
+            if (!(await confirmBox('删除调整项', `删除给 ${uname(a.user_id, a.username)} 的 ${usd(a.usd)}（${a.note}）？`, { danger: true, okText: '删除' }))) return;
             try { await api('POST', '/admin/settle/adjust-delete/' + a.id); reload(); } catch (e) { toast(errText(e), 'bad'); }
           } }, '删除'))))))) : h('div', { class: 'card-body muted small', text: '没有待结算的调整项。停机补偿、纠错等可以在这里添加。' }));
   }
 
-  function settlePreview(done) {
-    const status = h('div', { class: 'loading-box' }, icon('refresh', 'icon spin'), h('span', { text: '正在向 Polo 精确查询本期额度…' }));
-    const box = h('div', {}, status);
-    let jobId = null, result = null;
-    const note = h('input', { class: 'input', maxlength: '200', placeholder: '备注（可选）' });
-    const m = modal({ title: '生成结算单', body: box, wide: true, actions: [{ label: '取消' }, { label: '确认结算', kind: 'btn-primary', onClick: async () => {
-      if (!result) return false;
-      try { const r = await api('POST', '/admin/settle/commit', { job_id: jobId, expect_member_cny: result.calc.member_cny, note: note.value }); toast(`已生成结算单 #${r.id}`, 'ok'); done(); }
-      catch (e) { toast(errText(e), 'bad'); return false; }
-    } }] });
-    (async () => {
-      try {
-        const r = await api('POST', '/admin/settle/preview'); jobId = r.job_id;
-        result = await pollJob(jobId, (s, sec) => { status.lastChild.textContent = (s === 'queued' ? '排队中' : '正在向 Polo 精确查询本期额度') + `… ${sec} 秒`; });
-        const c = result.calc;
-        clear(box,
-          h('div', { class: 'notice n-info' }, icon('clock'), h('span', {}, '结算区间：', h('b', { text: rangeText(result.start, result.end) }), '（北京时间，精确到秒）')),
-          h('div', { class: 'sum-chips' }, h('div', {}, h('small', { text: '本期额度' }), h('b', { text: usd(c.total_usd) })), h('div', {}, h('small', { text: '应付成员' }), h('b', { class: 'money-strong', text: cny(c.member_cny) })),
-            h('div', {}, h('small', { text: '其中回本（不分成）' }), h('b', { text: cny(c.recover_cny || 0) })),
-            h('div', {}, h('small', { text: '我的收入' }), h('b', { text: cny(c.admin_cny) })), h('div', {}, h('small', { text: '汇率' }), h('b', { text: `¥${c.rate}/$` }))),
-          c.lines.length ? h('table', { class: 'mini-table', style: { marginTop: '12px' } },
-            h('thead', {}, h('tr', {}, ['成员', '分成', '额度', '调整', '毛收入', '回本·不分成', '应付成员'].map((t) => h('th', { text: t })))),
-            h('tbody', {}, c.lines.map((L) => h('tr', {}, h('td', {}, h('b', { text: L.username }), lineRecovery(L)), h('td', { class: 'small', text: shareTip(L.admin_share) }), h('td', { class: 'num', text: usd(L.usd) }),
-              h('td', { class: 'num', text: L.adjust_usd ? usd(L.adjust_usd) : '—' }), h('td', { class: 'num', text: cny(L.gross_cny) }), h('td', { class: 'num', text: L.recover_cny ? cny(L.recover_cny) : '—' }),
-              h('td', { class: 'num money-strong', text: cny(L.member_cny) }))))) : h('p', { class: 'muted', text: '本期没有需要支付给成员的金额（确认后只会把结算点往后移）。' }),
-          c.unowned_usd > 0 ? h('p', { class: 'muted small', text: `未归属账号 ${usd(c.unowned_usd)}（${cny(c.unowned_cny)}）算你自己的。` }) : null,
-          h('div', { style: { marginTop: '12px' } }, note),
-          h('p', { class: 'hint', text: '确认后生成结算单，结算点移到截止时间。点错了可以在“结算记录”里撤销最近一次。预览 30 分钟内有效。' }));
-      } catch (e) { clear(box, h('div', { class: 'notice n-bad' }, icon('warning'), h('span', { text: errText(e) }))); }
-    })();
-    return m;
-  }
-
+  // ---------- 结算记录 ----------
   async function settleHistory(body) {
-    const { settlements } = await api('GET', '/admin/settle/list');
-    const st = await api('GET', '/admin/settle/state');
+    const [{ settlements }, st] = await Promise.all([api('GET', '/admin/settle/list'), api('GET', '/admin/settle/state')]);
+    rememberUsers(st.users);
     const info = acctMap(st.accounts);
+    const reload = () => settleHistory(body);
     const active = settlements.filter((s) => s.status === 'active');
+    const latest = {};
+    for (const s of active) if (!(s.user_id in latest) || s.id > latest[s.user_id]) latest[s.user_id] = s.id;
+    const lineOf = (s) => s.lines[0] || null;
     const allLines = active.flatMap((s) => s.lines);
     const paid = r2(allLines.filter((l) => l.paid_at).reduce((a, l) => a + l.member_cny, 0));
     const owe = r2(allLines.reduce((a, l) => a + l.member_cny, 0));
     const recAll = r2(allLines.reduce((a, l) => a + (l.recover_cny || 0), 0));
+    const usdtUnpaid = r2(active.filter((s) => s.pay_currency === 'USDT' && s.lines.some((l) => !l.paid_at)).reduce((a, s) => a + (s.usdt_amount || 0), 0));
     const stats = h('div', { class: 'stats' },
       statCard('结算次数', active.length, 'log', 'blue', settlements.length > active.length ? `另有 ${settlements.length - active.length} 次已撤销` : null),
       statCard('累计应付成员', cny(owe), 'users', 'purple', recAll ? `其中回本 ${cny(recAll)}（不分成）` : null),
-      statCard('未付款', cny(r2(owe - paid)), 'clock', owe - paid > 0 ? 'warn' : 'ok', `已付 ${cny(paid)}`),
-      statCard('我的累计收入', cny(r2(active.reduce((a, s) => a + s.admin_cny, 0))), 'trend', 'ok', `额度 ${usd(active.reduce((a, s) => a + s.total_usd, 0))}`));
+      statCard('未付款', cny(r2(owe - paid)), 'clock', owe - paid > 0 ? 'warn' : 'ok', `已付 ${cny(paid)}${usdtUnpaid ? ` · USDT 未付 ${usdtFmt(usdtUnpaid)}` : ''}`),
+      statCard('我的累计抽成', cny(r2(active.reduce((a, s) => a + s.admin_cny, 0))), 'trend', 'ok', `成员号额度 ${usd(active.reduce((a, s) => a + s.total_usd, 0))}`));
+    // 按天汇总
     const byDay = {};
     for (const s of active) {
-      const d = new Date((s.created_at + 8 * 3600) * 1000).toISOString().slice(0, 10);
+      const d = dayOfTs(s.created_at);
       const x = byDay[d] = byDay[d] || { n: 0, usd: 0, member: 0, rec: 0, admin: 0, unpaid: 0 };
       x.n++; x.usd += s.total_usd + s.adjust_usd; x.member += s.member_cny; x.rec += s.recover_cny || 0; x.admin += s.admin_cny;
       x.unpaid += s.lines.filter((l) => !l.paid_at).reduce((a, l) => a + l.member_cny, 0);
     }
     const dayCard = h('div', { class: 'card', style: { marginBottom: '16px' } },
-      h('div', { class: 'card-head' }, h('h3', { class: 'card-title' }, icon('chart'), '每天的结算收入'),
-        h('button', { class: 'btn btn-secondary btn-sm', type: 'button', onclick: () => exportAll(settlements, info) }, icon('copy', 'icon icon-sm'), '导出全部 CSV')),
+      h('div', { class: 'card-head' }, h('h3', { class: 'card-title' }, icon('chart'), '每天的结算'), h('span', { class: 'faint xs', text: '按结算单生成的日期' })),
       Object.keys(byDay).length ? h('div', { class: 'table-wrap' }, h('table', { class: 'table' },
-        h('thead', {}, h('tr', {}, ['结算日期', '次数', '额度', '应付成员', '其中回本·不分成', '我的收入', '未付款'].map((t) => h('th', { text: t })))),
+        h('thead', {}, h('tr', {}, ['日期', '次数', '额度', '应付成员', '其中回本·不分成', '我的抽成', '未付款'].map((t) => h('th', { text: t })))),
         h('tbody', {}, Object.entries(byDay).sort((a, b) => b[0].localeCompare(a[0])).map(([d, x]) => h('tr', {}, h('td', { text: d }), h('td', { class: 'num', text: x.n }), h('td', { class: 'num', text: usd(x.usd) }),
           h('td', { class: 'num', text: cny(x.member) }), h('td', { class: 'num ' + (x.rec ? 'text-warn' : 'faint'), text: x.rec ? cny(x.rec) : '—' }), h('td', { class: 'num text-ok', text: cny(x.admin) }),
           h('td', { class: 'num ' + (x.unpaid > 0.004 ? 'text-warn' : 'faint'), text: x.unpaid > 0.004 ? cny(x.unpaid) : '已付清' })))))) : h('div', { class: 'card-body muted small', text: '还没有结算记录' }));
-    const latestId = active.length ? active[0].id : null;
-    const cards = settlements.map((s) => settlementCard(s, info, s.id === latestId, () => settleHistory(body)));
-    clear(body, stats, dayCard, cards.length ? cards : emptyState('还没有结算记录，到“待结算”里生成第一张结算单', 'log'));
+    // 列表 + 筛选
+    let who = 'all', state = 'all';
+    const whoIds = [...new Set(settlements.map((s) => s.user_id).filter((x) => x !== null && x !== undefined))];
+    const whoSel = h('select', { class: 'select select-sm', style: { width: 'auto' } }, h('option', { value: 'all', text: '全部成员' }), whoIds.map((id) => h('option', { value: id, text: uname(id, (settlements.find((s) => s.user_id === id).lines[0] || {}).username) })));
+    whoSel.addEventListener('change', () => { who = whoSel.value; draw(); });
+    const seg = h('div', { class: 'seg' });
+    const SEGS = [['all', '全部'], ['unpaid', '未付款'], ['paid', '已付款'], ['voided', '已撤销']];
+    const paintSeg = () => clear(seg, SEGS.map(([k, l]) => h('button', { type: 'button', class: state === k ? 'on' : '', onclick: () => { state = k; paintSeg(); draw(); } }, l)));
+    paintSeg();
+    const COLS = ['单号', '成员', '结算区间', '额度', '毛收入', '回本·不分成', '我的抽成', '应付成员', '付款', ''];
+    const tbody = h('tbody');
+    function draw() {
+      const listS = settlements.filter((s) => {
+        const L = lineOf(s);
+        if (who !== 'all' && String(s.user_id) !== who) return false;
+        if (state === 'voided') return s.status !== 'active';
+        if (s.status !== 'active') return state === 'all';
+        if (state === 'unpaid') return L && !L.paid_at;
+        if (state === 'paid') return L && L.paid_at;
+        return true;
+      });
+      clear(tbody, listS.length ? listS.flatMap((s) => historyRow(s, lineOf(s), latest[s.user_id] === s.id, st, info, reload, COLS.length))
+        : h('tr', {}, h('td', { colspan: String(COLS.length) }, emptyState('没有符合条件的结算单', 'log'))));
+    }
+    draw();
+    const listCard = h('div', { class: 'card' },
+      h('div', { class: 'card-head' }, h('h3', { class: 'card-title' }, icon('log'), '结算单'),
+        h('div', { class: 'toolbar' }, whoSel, seg, h('button', { class: 'btn btn-secondary btn-sm', type: 'button', onclick: () => exportAll(settlements, info) }, icon('copy', 'icon icon-sm'), '导出 CSV'))),
+      h('div', { class: 'table-wrap' }, h('table', { class: 'table responsive' }, h('thead', {}, h('tr', {}, COLS.map((t) => h('th', { text: t })))), tbody)));
+    clear(body, stats, dayCard, listCard);
   }
 
-  const CSV_HEAD = ['结算单', '开始', '截止', '成员', '账号', '邮箱', '额度(美元)', '调整(美元)', '汇率', '毛收入(人民币)', '成本合计', '之前已回本',
-    '本次回本(不分成)', '参与分成', '我的抽成%', '我的抽成(人民币)', '应付成员(人民币)', '还差回本', '付款'];
-  function settlementCsvRows(s, info) {
-    const rows = [], base = [s.id, fmtSec(s.start_at), fmtSec(s.end_at)];
-    for (const L of s.lines) {
-      for (const i of s.items.filter((x) => x.user_id === L.user_id)) {
-        const a = info[i.account_key] || {};
-        rows.push([...base, L.username, i.name || a.name || '', a.email || i.account_key || '', i.usd, '', '', '', '', '', '', '', '', '', '', '', '']);
-      }
-      rows.push([...base, L.username, '【小计】', '', L.usd, L.adjust_usd, s.rate, L.gross_cny, L.cost_total_cny, L.recovered_before_cny, L.recover_cny, L.shared_cny,
-        L.admin_share, L.admin_cny, L.member_cny, L.remaining_cny, L.paid_at ? '已付 ' + fmtSec(L.paid_at) + (L.paid_note ? ' ' + L.paid_note : '') : '未付']);
+  function historyRow(s, L, isLatest, st, info, reload, ncol) {
+    const voided = s.status !== 'active';
+    if (!L) return [h('tr', {}, h('td', { colspan: String(ncol), class: 'faint', text: `#${s.id} 没有成员明细` }))];
+    const meta = `${s.created_by || ''} 于 ${fmtTime(s.created_at)} 生成${s.note ? ' · 备注：' + s.note : ''}${voided ? ` · ${s.voided_by || ''} 于 ${fmtTime(s.voided_at)} 撤销` : ''}${L.paid_at ? ` · ${L.paid_by || ''} 于 ${fmtTime(L.paid_at)} 标记付款${L.paid_note ? '（' + L.paid_note + '）' : ''}` : ''}`;
+    const exp = h('tr', { class: 'exp-row', hidden: true }, h('td', { colspan: String(ncol) }, windowsTable(s.items, info), lineRecovery(L),
+      h('div', { class: 'faint xs', style: { marginTop: '6px' }, text: `毛收入 ${cny(L.gross_cny)} = 回本 ${cny(L.recover_cny)}（不分成） + 参与分成 ${cny(L.shared_cny)}（我抽 ${L.admin_share}%）` }),
+      h('div', { class: 'faint xs', style: { marginTop: '3px' }, text: meta })));
+    const payBtn = h('button', { class: 'btn btn-xs ' + (L.paid_at ? 'btn-paid' : 'btn-secondary'), type: 'button', disabled: voided, title: L.paid_at ? `${L.paid_by || ''} 于 ${fmtTime(L.paid_at)} 标记${L.paid_note ? '\n备注：' + L.paid_note : ''}` : '标记为已付款' },
+      icon(L.paid_at ? 'check' : 'clock', 'icon icon-sm'), L.paid_at ? '已付款' : '未付款');
+    payBtn.addEventListener('click', (e) => { e.stopPropagation(); payModal(s, L, st, reload); });
+    const ops = h('div', { class: 'row', style: { gap: '4px' } },
+      h('button', { class: 'btn btn-ghost btn-xs', type: 'button', title: '导出这张结算单', onclick: (e) => { e.stopPropagation(); downloadCsv(`polo-结算单-${s.id}.csv`, [CSV_HEAD, ...settlementCsvRows(s, info)]); } }, 'CSV'),
+      isLatest && !voided && !L.paid_at ? h('button', { class: 'btn btn-ghost btn-xs text-bad', type: 'button', onclick: async (e) => {
+        e.stopPropagation();
+        if (!(await confirmBox('撤销结算单', `撤销 #${s.id}（${uname(s.user_id, L.username)} ${cny(L.member_cny)}）？撤销后他的结算点退回到这张单之前，这段时间会并入他的下一次结算，回本进度也一起退回。`, { danger: true, okText: '撤销' }))) return;
+        try { await api('POST', '/admin/settle/void/' + s.id); toast('已撤销', 'ok'); reload(); } catch (err) { toast(errText(err), 'bad'); }
+      } }, '撤销') : null);
+    const tr = h('tr', { class: 'click' + (voided ? ' voided-row' : ''), onclick: () => { exp.hidden = !exp.hidden; tr.classList.toggle('open', !exp.hidden); } },
+      h('td', { 'data-label': '' }, h('b', { text: `#${s.id}` }), voided ? h('span', { class: 'badge b-gray', style: { marginLeft: '6px' }, text: '已撤销' }) : null, h('div', { class: 'faint xs', text: ago(s.created_at) })),
+      h('td', { 'data-label': '成员' }, userName2(s.user_id, L.username), h('div', { class: 'faint xs', text: `${L.accounts} 个号` })),
+      h('td', { 'data-label': '区间', class: 'small nowrap' }, h('div', { text: fmtSec(s.start_at) }), h('div', { class: 'faint', text: '→ ' + fmtSec(s.end_at) })),
+      h('td', { 'data-label': '额度', class: 'num', title: usd4(L.usd) }, usd(r2(L.usd + L.adjust_usd))),
+      h('td', { 'data-label': '毛收入', class: 'num' }, cny(L.gross_cny)),
+      h('td', { 'data-label': '回本·不分成', class: 'num ' + (L.recover_cny ? 'text-warn' : 'faint') }, L.recover_cny ? cny(L.recover_cny) : '—'),
+      h('td', { 'data-label': '我的抽成', class: 'num' }, cny(L.admin_cny)),
+      h('td', { 'data-label': '应付成员', class: 'num' }, h('div', { class: 'money-strong', text: cny(L.member_cny) }), payText(s) ? h('div', { class: 'xs text-info', text: payText(s) }) : null),
+      h('td', { 'data-label': '付款' }, payBtn),
+      h('td', { 'data-label': '' }, ops));
+    return [tr, exp];
+  }
+
+  function payModal(s, L, st, reload) {
+    const who = uname(s.user_id, L.username);
+    if (L.paid_at) {
+      confirmBox('取消付款标记', `把 #${s.id}（${who} ${cny(L.member_cny)}）改回“未付款”？`).then(async (ok) => {
+        if (!ok) return;
+        try { await api('POST', '/admin/settle/paid/' + L.id, { paid: false }); reload(); } catch (err) { toast(errText(err), 'bad'); }
+      });
+      return;
     }
-    if (s.unowned_usd) rows.push([...base, '（未归属）', '', '', s.unowned_usd, '', s.rate, r2(s.unowned_usd * s.rate), '', '', '', '', 100, r2(s.unowned_usd * s.rate), 0, '', '']);
+    const pay = payPicker(st.rates, () => L.member_cny, s.pay_currency === 'USDT' ? { currency: 'USDT', rate: s.usdt_rate, source: s.rate_source, rate_at: s.rate_at } : {});
+    const note = h('input', { class: 'input', maxlength: '200', placeholder: '例如：微信转账 / 支付宝单号 / 交易哈希（可选）' });
+    modal({ title: `标记已付款 · ${who}`, body: h('div', {}, h('p', {}, `#${s.id} 应付 `, h('b', { class: 'money-strong', text: cny(L.member_cny) })), pay.el, h('div', { style: { marginTop: '10px' } }, field('付款备注', note))),
+      actions: [{ label: '取消' }, { label: '标记已付款', kind: 'btn-primary', onClick: async () => {
+        const p = pay.get();
+        if (!p) { toast('请填写 USDT 汇率', 'bad'); return false; }
+        try { await api('POST', '/admin/settle/paid/' + L.id, Object.assign({ paid: true, note: note.value }, p)); toast('已标记', 'ok'); reload(); }
+        catch (err) { toast(errText(err), 'bad'); return false; }
+      } }] });
+  }
+
+  const CSV_HEAD = ['结算单', '成员', '用户名', '生成时间', '开始', '截止', '账号', '邮箱', '账号区间开始', '账号区间截止', '额度(美元)', '调整(美元)', '汇率', '毛收入(人民币)', '成本合计',
+    '之前已回本', '本次回本(不分成)', '参与分成', '我的抽成%', '我的抽成(人民币)', '应付成员(人民币)', '还差回本', '付款币种', 'USDT汇率', 'USDT金额', '付款', '状态'];
+  function settlementCsvRows(s, info) {
+    const L = s.lines[0];
+    if (!L) return [];
+    const base = [s.id, uname(s.user_id, L.username), L.username, fmtSec(s.created_at), fmtSec(s.start_at), fmtSec(s.end_at)];
+    const rows = s.items.map((i) => { const a = info[i.account_key] || {}; return [...base, i.name || a.name || '', a.email || i.account_key || '', i.start_at ? fmtSec(i.start_at) : '', i.end_at ? fmtSec(i.end_at) : '', i.usd, ...Array(16).fill('')]; });
+    rows.push([...base, '【合计】', '', '', '', L.usd, L.adjust_usd, s.rate, L.gross_cny, L.cost_total_cny, L.recovered_before_cny, L.recover_cny, L.shared_cny, L.admin_share, L.admin_cny,
+      L.member_cny, L.remaining_cny, s.pay_currency || 'CNY', s.usdt_rate || '', s.usdt_amount || '', L.paid_at ? '已付 ' + fmtSec(L.paid_at) + (L.paid_note ? ' ' + L.paid_note : '') : '未付', s.status === 'active' ? '有效' : '已撤销']);
     return rows;
   }
   function exportAll(settlements, info) {
-    downloadCsv(`polo-结算-全部-${new Date().toISOString().slice(0, 10)}.csv`, [CSV_HEAD, ...settlements.filter((s) => s.status === 'active').flatMap((s) => settlementCsvRows(s, info))]);
+    downloadCsv(`polo-结算-全部-${bjToday()}.csv`, [CSV_HEAD, ...settlements.flatMap((s) => settlementCsvRows(s, info))]);
   }
 
-  function settlementCard(s, info, isLatest, reload) {
-    const voided = s.status !== 'active';
-    const COLS = ['成员', '额度', '调整', '毛收入', '回本·不分成', '应付成员', '我的抽成', '付款', ''];
-    const tbody = h('tbody');
-    for (const L of s.lines) {
-      const items = s.items.filter((i) => i.user_id === L.user_id);
-      const exp = h('tr', { class: 'exp-row', hidden: true }, h('td', { colspan: String(COLS.length) }, itemsTable(items.map((i) => Object.assign({ key: i.account_key }, i)), info)));
-      const payBtn = h('button', { class: 'btn btn-xs ' + (L.paid_at ? 'btn-paid' : 'btn-secondary'), type: 'button', disabled: voided, title: L.paid_at ? `${L.paid_by || ''} 于 ${fmtTime(L.paid_at)} 标记${L.paid_note ? '\n备注：' + L.paid_note : ''}` : '标记为已付款' },
-        icon(L.paid_at ? 'check' : 'clock', 'icon icon-sm'), L.paid_at ? '已付款' : '未付款');
-      payBtn.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        if (L.paid_at) {
-          if (!(await confirmBox('取消付款标记', `把 ${L.username} 的 ${cny(L.member_cny)} 改回“未付款”？`))) return;
-          try { await api('POST', '/admin/settle/paid/' + L.id, { paid: false }); reload(); } catch (err) { toast(errText(err), 'bad'); }
-          return;
-        }
-        const note = h('input', { class: 'input', maxlength: '200', placeholder: '例如：微信转账 / 支付宝单号（可选）' });
-        modal({ title: `标记已付款 · ${L.username}`, body: h('div', {}, h('p', {}, '金额：', h('b', { class: 'money-strong', text: cny(L.member_cny) })), field('备注', note)),
-          actions: [{ label: '取消' }, { label: '标记已付款', kind: 'btn-primary', onClick: async () => { try { await api('POST', '/admin/settle/paid/' + L.id, { paid: true, note: note.value }); toast('已标记', 'ok'); reload(); } catch (err) { toast(errText(err), 'bad'); return false; } } }] });
-      });
-      const tr = h('tr', { class: 'click', onclick: () => { exp.hidden = !exp.hidden; tr.classList.toggle('open', !exp.hidden); } },
-        h('td', { 'data-label': '' }, h('b', { text: L.username }), h('div', { class: 'faint xs', text: `${L.accounts} 个号 · ${shareTip(L.admin_share)}` }), lineRecovery(L)),
-        h('td', { 'data-label': '额度', class: 'num', title: usd4(L.usd) }, usd(L.usd)),
-        h('td', { 'data-label': '调整', class: 'num ' + (L.adjust_usd ? '' : 'faint') }, L.adjust_usd ? usd(L.adjust_usd) : '—'),
-        h('td', { 'data-label': '毛收入', class: 'num' }, cny(L.gross_cny)),
-        h('td', { 'data-label': '回本·不分成', class: 'num ' + (L.recover_cny ? 'text-warn' : 'faint') }, L.recover_cny ? cny(L.recover_cny) : '—'),
-        h('td', { 'data-label': '应付成员', class: 'num money-strong' }, cny(L.member_cny)),
-        h('td', { 'data-label': '我的抽成', class: 'num' }, cny(L.admin_cny)),
-        h('td', { 'data-label': '付款' }, payBtn, L.paid_note ? h('div', { class: 'faint xs', text: L.paid_note }) : null),
-        h('td', { class: 'faint' }, icon('down', 'icon icon-sm chev')));
-      append(tbody, tr, exp);
-    }
-    const actions = h('div', { class: 'toolbar' },
-      h('button', { class: 'btn btn-secondary btn-xs', type: 'button', onclick: () => downloadCsv(`polo-结算单-${s.id}.csv`, [CSV_HEAD, ...settlementCsvRows(s, info)]) }, icon('copy', 'icon icon-sm'), 'CSV'),
-      isLatest && !voided ? h('button', { class: 'btn btn-ghost btn-xs text-bad', type: 'button', onclick: async () => {
-        if (!(await confirmBox('撤销结算单', `撤销 #${s.id}？撤销后结算点退回 ${fmtSec(s.start_at)}，这段时间会并入下一次结算，回本进度也一起退回。`, { danger: true, okText: '撤销' }))) return;
-        try { await api('POST', '/admin/settle/void/' + s.id); toast('已撤销', 'ok'); reload(); } catch (e) { toast(errText(e), 'bad'); }
-      } }, '撤销') : null);
-    return h('div', { class: 'card settle-card' + (voided ? ' voided' : ''), style: { marginBottom: '14px' } },
-      h('div', { class: 'card-head' },
-        h('div', {}, h('h3', { class: 'card-title' }, `结算单 #${s.id}`, voided ? h('span', { class: 'badge b-gray', text: '已撤销' }) : null),
-          h('div', { class: 'muted small', text: `${rangeText(s.start_at, s.end_at)} · ${s.created_by || ''} 于 ${fmtTime(s.created_at)} 生成${s.note ? ' · ' + s.note : ''}` })),
-        actions),
-      h('div', { class: 'sum-chips', style: { padding: '0 20px 12px' } },
-        h('div', {}, h('small', { text: '额度' }), h('b', { text: usd(s.total_usd) })), h('div', {}, h('small', { text: '应付成员' }), h('b', { class: 'money-strong', text: cny(s.member_cny) })),
-        h('div', {}, h('small', { text: '其中回本（不分成）' }), h('b', { text: cny(s.recover_cny || 0) })),
-        h('div', {}, h('small', { text: '我的收入' }), h('b', { text: cny(s.admin_cny) })), h('div', {}, h('small', { text: '自有号' }), h('b', { text: usd(s.unowned_usd) })), h('div', {}, h('small', { text: '汇率' }), h('b', { text: `¥${s.rate}/$` }))),
-      s.lines.length ? h('div', { class: 'table-wrap' }, h('table', { class: 'table responsive' },
-        h('thead', {}, h('tr', {}, COLS.map((t) => h('th', { text: t })))), tbody)) : h('div', { class: 'card-body muted small', text: '这次没有需要支付给成员的金额' }));
-  }
-
-  async function settleDaily(body) {
-    const r = await api('GET', '/admin/settle/daily');
-    const info = acctMap(r.accounts);
-    let range = Number(localStorage.getItem('polo_daily_range') || 30);
-    const wrap = h('div');
-    const sel = h('select', { class: 'select select-sm', style: { width: 'auto' } }, [7, 14, 30, 60, 92].map((n) => h('option', { value: n, selected: n === range, text: `最近 ${n} 天` })));
-    sel.addEventListener('change', () => { range = Number(sel.value); localStorage.setItem('polo_daily_range', range); draw(); });
-    const sumOf = (rows, f) => rows.reduce((a, x) => a + (x[f] || 0), 0);
-    function draw() {
-      const days = r.days.slice(0, range);
-      const totals = days.map((d) => sumOf(d.rows, 'usd'));
-      const sumUsd = totals.reduce((a, x) => a + x, 0);
-      const best = days.length ? days[totals.indexOf(Math.max(...totals))] : null;
-      const chart = barChart([...days].reverse().map((d) => ({ label: d.day, value: sumOf(d.rows, 'usd'), live: dayStatus(d)[1] === '今日实时' })), { sub: (p) => cny(p.value * r.rate) + '（按汇率）' });
-      const dayTable = h('table', { class: 'table responsive' },
-        h('thead', {}, h('tr', {}, ['日期', '总额度', '按汇率', '请求', 'Token', '状态'].map((t) => h('th', { text: t })))),
-        h('tbody', {}, days.map((d) => { const u = sumOf(d.rows, 'usd'); const [bc, bt] = dayStatus(d); return h('tr', {},
-          h('td', { 'data-label': '', class: 'nowrap' }, h('b', { text: d.day })), h('td', { 'data-label': '总额度', class: 'num money-strong' }, usd(u)),
-          h('td', { 'data-label': '按汇率', class: 'num' }, cny(u * r.rate)),
-          h('td', { 'data-label': '请求', class: 'num' }, compact(sumOf(d.rows, 'requests'))), h('td', { 'data-label': 'Token', class: 'num' }, compact(sumOf(d.rows, 'tokens'))),
-          h('td', { 'data-label': '状态' }, h('span', { class: 'badge ' + bc, title: d.fetched_at ? '查询于 ' + fmtTime(d.fetched_at) : '', text: bt }))); })));
-      const keys = {};
-      for (const d of days) for (const x of d.rows) { const k = keys[x.key] = keys[x.key] || { key: x.key, name: x.name, total: 0, by: {} }; k.total += x.usd; k.by[d.day] = (k.by[d.day] || 0) + x.usd; }
-      const accs = Object.values(keys).sort((a, b) => b.total - a.total);
-      const userName = Object.fromEntries(r.users.map((u) => [u.id, u.username]));
-      const matrix = h('table', { class: 'table matrix' },
-        h('thead', {}, h('tr', {}, h('th', { class: 'sticky-col', text: '账号' }), h('th', { text: '归属' }), h('th', { text: '合计' }), days.map((d) => h('th', { class: 'num', text: d.day.slice(5) })))),
-        h('tbody', {}, accs.map((k) => { const a = info[k.key]; return h('tr', {},
-          h('td', { class: 'sticky-col' }, acctLabel(k.key, info, k.name)), h('td', { class: 'small' }, a && a.owner ? userName[a.owner] || '—' : h('span', { class: 'faint', text: '自有' })),
-          h('td', { class: 'num money-strong' }, usd(k.total)), days.map((d) => h('td', { class: 'num ' + (k.by[d.day] ? '' : 'faint') }, k.by[d.day] ? usd(k.by[d.day]) : '—'))); })));
-      clear(wrap,
-        h('div', { class: 'stats' }, statCard(`${days.length} 天总额度`, usd(sumUsd), 'dollar', 'blue', `按汇率 ${cny(sumUsd * r.rate)}`),
-          statCard('日均额度', usd(days.length ? sumUsd / days.length : 0), 'activity', 'purple', `按汇率 ${cny(days.length ? (sumUsd / days.length) * r.rate : 0)}`),
-          statCard('最高一天', best ? usd(Math.max(...totals)) : '—', 'chart', 'cyan', best ? best.day : null),
-          statCard('有用量的账号', accs.filter((k) => k.total > 0).length, 'server', 'ok', '成员应得和我的收入见“结算记录”')),
-        h('div', { class: 'card', style: { marginBottom: '16px' } }, h('div', { class: 'card-head' }, h('h3', { class: 'card-title' }, icon('chart'), '每日额度'), sel), h('div', { class: 'card-body' }, chart)),
-        h('div', { class: 'card', style: { marginBottom: '16px' } }, h('div', { class: 'card-head' }, h('h3', { class: 'card-title' }, icon('log'), '每日统计'), h('span', { class: 'faint xs', text: '前一天在次日 00:30 后定稿；今天每 15 分钟更新' })), h('div', { class: 'table-wrap' }, dayTable)),
-        h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h3', { class: 'card-title' }, icon('server'), '每天每个号的额度')), h('div', { class: 'table-wrap' }, matrix)));
-    }
-    draw();
-    clear(body, wrap);
-  }
-
+  // ---------- 归属与设置 ----------
   function costPlanModal(a, st, reload) {
     const plan = st.costs.plans.find((p) => p.account_key === a.key);
-    const today = new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10);
-    const addDay = a.added_at ? new Date(new Date(a.added_at).getTime() + 8 * 3600000).toISOString().slice(0, 10) : today;
+    const today = bjToday();
+    const addDay = a.added_at ? dayOfTs(Math.floor(Date.parse(a.added_at) / 1000)) : today;
     const start = h('input', { class: 'input', type: 'date', max: today, value: plan ? plan.start_day : addDay });
     const monthly = h('input', { type: 'checkbox', checked: plan ? !!plan.monthly : st.settings.cost_cycle === 'monthly' });
     const price = SEAT_CN[a.seat] ? `${SEAT_CN[a.seat]}席位 ${cny(st.settings['price_' + a.seat])}` : '还没标席位：金额待定，标上后自动补';
@@ -1700,25 +1803,63 @@
     modal({ title: `不再给 ${a.name || a.key} 计成本`, body: h('div', {}, h('p', { text: '“停止以后的续费”：已经记下的成本保留，继续回本。' }), h('p', { text: '“全部删除”：这个号的成本记录全部删掉，等于这个号不算成本。已经结算过的回本不会追回。' })),
       actions: [{ label: '取消' }, { label: '停止以后的续费', kind: 'btn-secondary', onClick: () => go2(false) }, { label: '全部删除', kind: 'btn-danger', onClick: () => go2(true) }] });
   }
+  // 换归属：选新成员从什么时候开始算
+  function ownerModal(a, uid, st, reload) {
+    const spans = st.spans.filter((x) => x.account_key === a.key);
+    const open = spans.find((x) => x.to_ts === null);
+    let lo = 0;
+    for (const x of spans) if (x.to_ts !== null) lo = Math.max(lo, x.to_ts + 1);
+    if (open && open.settled_until !== null) lo = Math.max(lo, open.settled_until + 1);
+    const now = Math.floor(Date.now() / 1000);
+    const added = a.added_at ? Math.floor(Date.parse(a.added_at) / 1000) : null;
+    const canAdded = !spans.length && added !== null && !isNaN(added);
+    const isNew = canAdded && added >= st.settings.cost_since;
+    let mode = isNew ? 'added' : 'now', ok = false;
+    const custom = h('input', { class: 'input input-sm mono', type: 'datetime-local', step: '1', value: toBjInput(Math.max(lo, now - 3600)) });
+    const radios = [];
+    const opt = (k, label, sub, extra) => {
+      const r = h('input', { type: 'radio', name: 'own-start', value: k, checked: mode === k, onchange: () => { mode = k; } });
+      radios.push(r);
+      return h('label', { class: 'radio-row' }, r, h('div', { class: 'grow' }, h('b', { text: label }), sub ? h('div', { class: 'faint xs', text: sub }) : null, extra || null));
+    };
+    const customRow = opt('custom', '自定义时间（北京时间，精确到秒）', lo ? `最早可选 ${fmtSec(lo)}（不能早于之前的归属或已经结算到的时间），不能晚于现在` : '不能晚于现在', h('div', { style: { marginTop: '6px' } }, custom));
+    custom.addEventListener('focus', () => { mode = 'custom'; radios.forEach((r) => { r.checked = r.value === 'custom'; }); });
+    const prev = open ? uname(open.user_id) : null;
+    modal({ title: `${a.name || a.key} 归给 ${uname(uid)}`, onClose: () => { if (!ok) reload(); },
+      body: h('div', {},
+        open ? h('div', { class: 'notice n-info' }, icon('info'), h('span', { text: `现在归 ${prev}（自 ${fmtSec(open.from_ts)}${open.settled_until ? `，已结算到 ${fmtSec(open.settled_until)}` : '，还没结算过'}）。${prev} 的归属在新起点的前一秒结束，之前没结算的部分仍然可以给 ${prev} 结算——同一秒只算给一个人，不会重复也不会漏。` })) : null,
+        h('div', { class: 'label', style: { margin: '6px 0 8px' }, text: `从什么时候开始算 ${uname(uid)} 的？` }),
+        opt('now', '从现在开始', open ? `现在之前的额度仍然算 ${prev} 的` : '现在之前的额度算你自己的'),
+        canAdded ? opt('added', `从这个号加入 Polo 时开始（${fmtSec(added)}）`, isNew ? '新开的号默认这样：开号到现在的额度都算给成员' : '这个号加入 Polo 早于成本起算时间，一般是你自己的旧号') : null,
+        customRow),
+      actions: [{ label: '取消' }, { label: '确定', kind: 'btn-primary', onClick: async () => {
+        const d = { account_key: a.key, user_id: uid, start: mode };
+        if (mode === 'custom') { d.start_at = fromBjInput(custom.value); if (!d.start_at) { toast('请填写时间', 'bad'); return false; } }
+        try { const r = await api('POST', '/admin/settle/owner', d); ok = true; toast(`${a.name || a.key} → ${uname(uid)}，从 ${fmtSec(r.from_ts)} 开始算`, 'ok'); reload(); }
+        catch (e) { toast(errText(e) + (e.body && e.body.earliest ? `（最早 ${fmtSec(e.body.earliest)}）` : ''), 'bad'); return false; }
+      } }] });
+  }
 
   async function settleSettings(body) {
     const st = await api('GET', '/admin/settle/state');
+    rememberUsers(st.users);
     const s = st.settings;
     const reload = () => settleSettings(body);
     const users = st.users.filter((u) => u.status !== 'pending');
-    const userName = Object.fromEntries(st.users.map((u) => [u.id, u.username]));
     // 结算参数
     const rate = h('input', { class: 'input', type: 'number', step: '0.01', min: '0', value: s.rate });
     const share = h('input', { class: 'input', type: 'number', step: '1', min: '0', max: '100', value: s.default_share });
-    const first = h('input', { class: 'input mono', value: fmtSec(s.first_start), disabled: s.first_start_locked, placeholder: 'YYYY-MM-DD HH:MM:SS' });
     const from = h('input', { class: 'input', type: 'date', value: s.stats_from });
     const pp = h('input', { class: 'input', type: 'number', step: '1', min: '0', value: s.price_premium });
     const ps = h('input', { class: 'input', type: 'number', step: '1', min: '0', value: s.price_standard });
     const cyc = h('select', { class: 'select' }, h('option', { value: 'monthly', text: '每月续费都算', selected: s.cost_cycle === 'monthly' }), h('option', { value: 'once', text: '只算一次', selected: s.cost_cycle === 'once' }));
+    const src = h('select', { class: 'select' }, Object.keys(RATE_LABEL).filter((k) => k !== 'manual').map((k) => {
+      const x = st.rates.sources[k];
+      return h('option', { value: k, selected: s.usdt_source === k, text: `${RATE_LABEL[k]}${x ? ' ' + x.rate : ''}` });
+    }));
     const saveBtn = h('button', { class: 'btn btn-primary btn-sm', type: 'button' }, '保存参数');
     saveBtn.addEventListener('click', async () => {
-      const d = { rate: Number(rate.value), default_share: Number(share.value), stats_from: from.value, price_premium: Number(pp.value), price_standard: Number(ps.value), cost_cycle: cyc.value };
-      if (!s.first_start_locked) d.first_start = first.value.trim();
+      const d = { rate: Number(rate.value), default_share: Number(share.value), stats_from: from.value, price_premium: Number(pp.value), price_standard: Number(ps.value), cost_cycle: cyc.value, usdt_source: src.value };
       try { await api('POST', '/admin/settle/settings', d); toast('已保存', 'ok'); reload(); } catch (e) { toast(errText(e), 'bad'); }
     });
     const params = h('div', { class: 'card', style: { marginBottom: '16px' } },
@@ -1726,8 +1867,8 @@
       h('div', { class: 'card-body grid-4' },
         field('汇率（人民币 / 美元）', rate, '每 1 美元额度换算多少人民币；改动从下一次结算起生效'),
         field('默认抽成（%）', share, '回本以后你拿的比例；成员拿剩下的。每个成员可单独设置'),
-        field('首次结算起点（北京时间）', first, s.first_start_locked ? '已结算过，不能再改' : '第一次结算从这个时间开始算'),
-        field('每日统计从', from, '从这天起补算每天每个号的额度'),
+        field('USDT 默认汇率来源', src, '结算时默认用哪个价格把人民币换成 USDT；每次结算时还可以改'),
+        field('统计从', from, '从这天起补算每天每个号的额度（统计看板用）'),
         field('高级号成本（人民币）', pp, '每次开号 / 续费记多少；只影响之后新记的成本'),
         field('标准号成本（人民币）', ps, '同上'),
         field('新号成本方式', cyc, `${fmtSec(s.cost_since)} 之后加入 Polo 的号，归给成员时自动记成本`)));
@@ -1740,40 +1881,53 @@
       const paint = () => { const v = inp.value === '' ? s.default_share : Number(inp.value); out.textContent = `回本后成员得 ${r2(100 - v)}%（每 $1 得 ${cny(s.rate * (100 - v) / 100)}）`; };
       inp.addEventListener('input', paint); paint();
       const save = h('button', { class: 'btn btn-secondary btn-xs', type: 'button', onclick: async () => {
-        try { await api('POST', '/admin/settle/share', { user_id: u.id, admin_share: inp.value === '' ? null : Number(inp.value) }); toast(`已保存 ${u.username} 的分成`, 'ok'); } catch (e) { toast(errText(e), 'bad'); }
+        try { await api('POST', '/admin/settle/share', { user_id: u.id, admin_share: inp.value === '' ? null : Number(inp.value) }); toast(`已保存 ${nameOf(u)} 的分成`, 'ok'); } catch (e) { toast(errText(e), 'bad'); }
       } }, '保存');
-      return h('tr', {}, h('td', {}, h('b', { text: u.username }), u.role === 'admin' ? h('span', { class: 'chip', style: { marginLeft: '6px' }, text: '管理员' }) : null, u.status === 'disabled' ? h('span', { class: 'chip', style: { marginLeft: '6px' }, text: '已停用' }) : null),
+      return h('tr', {}, h('td', {}, userName2(u.id), u.role === 'admin' ? h('span', { class: 'chip', style: { marginLeft: '6px' }, text: '管理员' }) : null, u.status === 'disabled' ? h('span', { class: 'chip', style: { marginLeft: '6px' }, text: '已停用' }) : null),
         h('td', { class: 'num', text: owned[u.id] || 0 }), h('td', {}, h('div', { class: 'row' }, inp, h('span', { class: 'faint small', text: '%' }))), h('td', {}, out), h('td', {}, save));
     });
     const shares = h('div', { class: 'card', style: { marginBottom: '16px' } },
-      h('div', { class: 'card-head' }, h('h3', { class: 'card-title' }, icon('users'), '成员分成'), h('span', { class: 'faint xs', text: '留空 = 用默认抽成；修改从下一次结算起生效；回本前一律不抽成' })),
+      h('div', { class: 'card-head' }, h('h3', { class: 'card-title' }, icon('users'), '成员分成'), h('span', { class: 'faint xs', text: '留空 = 用默认抽成；修改从下一次结算起生效；回本前一律不抽成。备注昵称在“用户管理”里改' })),
       h('div', { class: 'table-wrap' }, h('table', { class: 'table' }, h('thead', {}, h('tr', {}, ['成员', '归属账号', '我的抽成', '', ''].map((t) => h('th', { text: t })))), h('tbody', {}, shareRows))));
     // 账号归属与成本
     const fill = h('button', { class: 'btn btn-secondary btn-sm', type: 'button', onclick: async () => {
+      if (!(await confirmBox('按可见账号一键填充', '只有一位成员能看到、且还没设置归属的号，会归给这位成员。旧号从现在开始算，新号从加入 Polo 时开始算。', { okText: '填充' }))) return;
       try { const r = await api('POST', '/admin/settle/owner-fill'); toast(r.filled ? `已按可见账号填充 ${r.filled} 个` : '没有可以自动填充的（只填“只有一位成员能看到”且未设置归属的号）', r.filled ? 'ok' : 'info'); reload(); } catch (e) { toast(errText(e), 'bad'); }
     } }, icon('users', 'icon icon-sm'), '按可见账号一键填充');
     const STATUS = { active: ['b-ok', '在池'], archived: ['b-gray', '已归档'], gone: ['b-gray', '已移除'], unknown: ['b-warn', '待确认'] };
     const known = st.accounts.filter((a) => a.status === 'active' || a.status === 'archived');
     const plans = Object.fromEntries(st.costs.plans.map((p) => [p.account_key, p]));
+    const spansOf = {};
+    for (const x of st.spans) (spansOf[x.account_key] = spansOf[x.account_key] || []).push(x);
     const ownRows = st.accounts.map((a) => {
       const sel = h('select', { class: 'select select-sm', style: { width: 'auto', minWidth: '140px' } }, h('option', { value: '', text: '未归属（我自己的）', selected: !a.owner }),
-        users.map((u) => h('option', { value: u.id, text: u.username, selected: a.owner === u.id })));
+        users.map((u) => h('option', { value: u.id, text: nameOf(u), selected: a.owner === u.id })));
       sel.addEventListener('change', async () => {
-        try { await api('POST', '/admin/settle/owner', { account_key: a.key, user_id: sel.value === '' ? null : Number(sel.value) }); toast(`${a.name || a.key} → ${sel.value ? sel.selectedOptions[0].text : '未归属'}`, 'ok'); reload(); }
-        catch (e) { toast(errText(e), 'bad'); reload(); }
+        if (sel.value === '') {
+          const ok = await confirmBox('改回未归属', `${a.name || a.key} 从现在起算你自己的。${a.owner ? uname(a.owner) + ' 在这之前没结算的部分，仍然可以给他结算。' : ''}`, { okText: '改回未归属' });
+          if (!ok) return reload();
+          try { await api('POST', '/admin/settle/owner', { account_key: a.key, user_id: null }); toast(`${a.name || a.key} → 未归属`, 'ok'); } catch (e) { toast(errText(e), 'bad'); }
+          return reload();
+        }
+        ownerModal(a, Number(sel.value), st, reload);
       });
+      const sp = (spansOf[a.key] || []).slice().sort((x, y) => y.from_ts - x.from_ts);
+      const open = sp.find((x) => x.to_ts === null);
+      const hist = h('div', { class: 'span-hist' },
+        open ? h('div', { class: 'xs faint', text: `自 ${fmtSec(open.from_ts).slice(0, 16)} 起${open.settled_until ? ` · 已结算到 ${fmtSec(open.settled_until).slice(5, 16)}` : ' · 还没结算过'}` }) : null,
+        sp.filter((x) => x.to_ts !== null).slice(0, 3).map((x) => h('div', { class: 'xs faint', text: `之前：${uname(x.user_id)} ${fmtSec(x.from_ts).slice(5, 16)} → ${fmtSec(x.to_ts).slice(5, 16)}${x.settled_until !== null && x.settled_until >= x.to_ts ? ' · 已结清' : ' · 有未结部分'}` })));
       let mapCtl = null;
       if (a.status === 'unknown' && a.uuids.length) {
-        const ms = h('select', { class: 'select select-sm', style: { width: 'auto' } }, h('option', { value: '', text: '选择对应的邮箱…' }), known.map((k) => h('option', { value: k.key, text: `${k.name} · ${k.email || k.key}` })));
-        ms.addEventListener('change', async () => { if (!ms.value) return; try { await api('POST', '/admin/settle/map', { uuid: a.uuids[0], account_key: ms.value }); toast('已对应', 'ok'); reload(); } catch (e) { toast(errText(e), 'bad'); } });
-        mapCtl = h('div', { style: { marginTop: '6px' } }, ms);
+        const mapSel = h('select', { class: 'select select-sm', style: { width: 'auto' } }, h('option', { value: '', text: '选择对应的邮箱…' }), known.map((k) => h('option', { value: k.key, text: `${k.name} · ${k.email || k.key}` })));
+        mapSel.addEventListener('change', async () => { if (!mapSel.value) return; try { await api('POST', '/admin/settle/map', { uuid: a.uuids[0], account_key: mapSel.value }); toast('已对应', 'ok'); reload(); } catch (e) { toast(errText(e), 'bad'); } });
+        mapCtl = h('div', { style: { marginTop: '6px' } }, mapSel);
       }
       const p = plans[a.key];
       let cost;
       if (p) {
         const each = a.seat ? cny(s['price_' + a.seat]) : '待定';
         cost = h('div', {}, h('div', { class: 'small', text: `${p.monthly ? '每月' : '一次性'} ${each} · ${p.start_day} 起` }),
-          p.user_id !== a.owner ? h('div', { class: 'text-warn xs', text: `记在 ${userName[p.user_id] || '?'} 名下` }) : null,
+          p.user_id !== a.owner ? h('div', { class: 'text-warn xs', text: `记在 ${uname(p.user_id)} 名下` }) : null,
           h('div', { class: 'row', style: { gap: '4px', marginTop: '3px' } },
             h('button', { class: 'btn btn-ghost btn-xs', type: 'button', onclick: () => costPlanModal(a, st, reload) }, '修改'),
             h('button', { class: 'btn btn-ghost btn-xs', type: 'button', onclick: () => costPlanStop(a, reload) }, '不计成本')));
@@ -1783,13 +1937,13 @@
       const [bc, bt] = STATUS[a.status] || ['b-gray', a.status];
       return h('tr', {}, h('td', {}, acctLabel(a.key, { [a.key]: Object.assign({}, a, { status: '' }) }, a.name), mapCtl),
         h('td', {}, h('span', { class: 'badge ' + bc, text: bt }), a.seat ? h('div', { class: 'faint xs', style: { marginTop: '3px' }, text: SEAT_CN[a.seat] + '席位' }) : null),
-        h('td', { class: 'small' }, a.visible.length ? a.visible.join('、') : h('span', { class: 'faint', text: '—' })),
-        h('td', {}, sel), h('td', {}, cost));
+        h('td', { class: 'small' }, a.visible.length ? a.visible.map(unameByLogin).join('、') : h('span', { class: 'faint', text: '—' })),
+        h('td', {}, sel, hist), h('td', {}, cost));
     });
     const owners = h('div', { class: 'card', style: { marginBottom: '16px' } },
-      h('div', { class: 'card-head' }, h('div', {}, h('h3', { class: 'card-title' }, icon('server'), '账号归属与成本'), h('div', { class: 'faint xs', text: '结算时按“确认结算那一刻”的归属计算整期；换归属前建议先结算一次。归属和“可见账号”是分开设置的。新号归给成员时自动记成本，已有的号默认不计（可点“记成本”）。' })), fill),
+      h('div', { class: 'card-head' }, h('div', {}, h('h3', { class: 'card-title' }, icon('server'), '账号归属与成本'),
+        h('div', { class: 'faint xs', text: '每个号按时间段归属：换成员时选新成员从哪一秒开始算，旧成员到前一秒为止，各自结算，不重复不遗漏。归属和“可见账号”是分开设置的。新号归给成员时自动记成本，已有的号默认不计（可点“记成本”）。' })), fill),
       h('div', { class: 'table-wrap' }, h('table', { class: 'table' }, h('thead', {}, h('tr', {}, ['账号', '状态', '能看到的成员', '结算归属', '成本'].map((t) => h('th', { text: t })))), h('tbody', {}, ownRows))));
-    // 成本记录
     const ledger = h('div', { class: 'card' },
       h('div', { class: 'card-head' }, h('h3', { class: 'card-title' }, icon('dollar'), '成本记录'), h('span', { class: 'faint xs', text: '每次开号 / 续费一条，金额按当时的席位价格记下；可以改金额或免除' })),
       h('div', { class: 'card-body' }, chargesTable(st.costs.charges, { admin: true, reload })));
@@ -1817,13 +1971,13 @@
       `汇率 ¥${r.rate}/$。`, hasCost ? ['你名下号的成本（开号和每月续费）回本前，收入全归你，每 $1 得 ', h('b', { text: cny(r.rate) }), '、不分成；回本后超出的部分你得 ', h('b', { text: `${r2(r.member_share)}%` }), '，每 $1 得 ', h('b', { text: cny(per) }), '。']
         : [`你的分成 ${r2(r.member_share)}%：每 $1 额度得 `, h('b', { text: cny(per) }), '。'],
       '待结算数字是预估（每 15 分钟更新），以结算单为准。'));
+    const lastTxt = r.last ? `上次结算 ${fmtSec(r.last.end_at).slice(5, 16)}` : '还没结算过';
     const stats = h('div', { class: 'stats' },
-      statCard('待结算收入', p ? cny(p.cny) : '—', 'dollar', 'blue', p ? `毛收入 ${cny(p.gross_cny)}${p.recover_cny ? ` · 其中回本 ${cny(p.recover_cny)}` : ''} · 截至 ${fmtTime(p.end, false)}` : '预估生成中'),
+      statCard('待结算收入', p && p.valid ? cny(p.cny) : '—', 'dollar', 'blue', p && p.valid ? `毛收入 ${cny(p.gross_cny)}${p.recover_cny ? ` · 其中回本 ${cny(p.recover_cny)}` : ''} · 截至 ${fmtTime(p.end, false)}` : `预估更新中 · ${lastTxt}`),
       statCard('回本进度', !hasCost ? '无成本' : rc.remaining_cny > 0 ? `还差 ${cny(rc.remaining_cny)}` : '已回本', 'trend', !hasCost || rc.remaining_cny <= 0 ? 'ok' : 'warn',
         hasCost ? `成本 ${cny(rc.cost_total_cny)} · 已回 ${cny(rc.recovered_cny)}${rc.pending_recover_cny ? ` · 本期再回 ${cny(rc.pending_recover_cny)}` : ''}` : '名下的号不计成本'),
       statCard('未付款', cny(r.unpaid_cny), 'clock', r.unpaid_cny > 0 ? 'warn' : 'ok', '已结算但还没收到的'),
       statCard('累计已结算', cny(r.settled_cny), 'check', 'ok', `已付款 ${cny(r.paid_cny)}${r.recovered_total_cny ? ` · 其中回本 ${cny(r.recovered_total_cny)}` : ''}`));
-    // 回本
     const rec = hasCost ? h('div', { class: 'card', style: { marginBottom: '16px' } },
       h('div', { class: 'card-head' }, h('h3', { class: 'card-title' }, icon('trend'), '回本进度'), h('span', { class: 'faint xs', text: '回本部分全归你、不分成' })),
       h('div', { class: 'card-body' },
@@ -1835,28 +1989,27 @@
             h('div', {}, h('small', { text: '还差' }), h('b', { class: rc.remaining_cny > 0 ? 'text-warn' : 'text-ok', text: rc.remaining_cny > 0 ? cny(rc.remaining_cny) : '已回本' })))),
         rc.pending_seat ? h('div', { class: 'notice n-warn', style: { marginTop: '12px' } }, icon('warning'), h('span', { text: `有 ${rc.pending_seat} 笔成本的金额待定（账号还没标席位），暂按 ¥0 算。` })) : null,
         h('div', { style: { marginTop: '12px' } }, chargesTable(r.charges)))) : null;
-    // 待结算按账号
-    const footer = p ? [h('tr', {}, h('td', { text: '合计' }), h('td', { class: 'num', text: usd(p.usd + p.adjust_usd) }), h('td'), h('td'), h('td', { class: 'num', text: cny(p.gross_cny) }))] : [];
+    const footer = p ? [h('tr', {}, h('td', { text: '合计' }), h('td', { class: 'num', text: usd(r2(p.usd + p.adjust_usd)) }), h('td'), h('td'), h('td', { class: 'num', text: cny(p.gross_cny) }))] : [];
     if (p && p.recover_cny) footer.push(h('tr', {}, h('td', { colspan: '4', text: '其中回本（全归你，不分成）' }), h('td', { class: 'num text-warn', text: cny(p.recover_cny) })));
     if (p && p.shared_cny) footer.push(h('tr', {}, h('td', { colspan: '4', text: `参与分成 ${cny(p.shared_cny)} × ${r2(r.member_share)}%` }), h('td', { class: 'num', text: cny(r2(p.shared_cny - p.admin_cny)) })));
     if (p) footer.push(h('tr', {}, h('td', { colspan: '4', text: '待结算收入（预估）' }), h('td', { class: 'num money-strong', text: cny(p.cny) })));
     const pend = h('div', { class: 'card', style: { marginBottom: '16px' } },
-      h('div', { class: 'card-head' }, h('h3', { class: 'card-title' }, icon('server'), '待结算：各账号贡献'), p ? h('span', { class: 'muted small', text: rangeText(p.start, p.end) }) : null),
-      p && (p.rows.length || r.adjustments.length) ? h('div', { class: 'table-wrap' }, h('table', { class: 'table responsive' },
+      h('div', { class: 'card-head' }, h('h3', { class: 'card-title' }, icon('server'), '待结算：各账号贡献'), p && p.start ? h('span', { class: 'muted small', text: rangeText(p.start, p.end) }) : null),
+      p && p.valid && (p.rows.length || r.adjustments.length) ? h('div', { class: 'table-wrap' }, h('table', { class: 'table responsive' },
         h('thead', {}, h('tr', {}, ['账号', '额度', '请求', 'Token', '按汇率'].map((t) => h('th', { text: t })))),
-        h('tbody', {}, p.rows.map((x) => h('tr', {}, h('td', { 'data-label': '' }, acctLabel(x.key, info, x.name)), h('td', { 'data-label': '额度', class: 'num', title: usd4(x.usd) }, usd(x.usd)),
+        h('tbody', {}, p.rows.map((x) => h('tr', {}, h('td', { 'data-label': '' }, acctLabel(x.key, info, x.name), x.start !== p.start ? h('div', { class: 'faint xs', text: `从 ${fmtSec(x.start).slice(5)} 起` }) : null),
+          h('td', { 'data-label': '额度', class: 'num', title: usd4(x.usd) }, usd(x.usd)),
           h('td', { 'data-label': '请求', class: 'num' }, compact(x.requests)), h('td', { 'data-label': 'Token', class: 'num' }, compact(x.tokens)), h('td', { 'data-label': '按汇率', class: 'num' }, cny(x.usd * r.rate)))),
           r.adjustments.map((a) => h('tr', {}, h('td', { 'data-label': '' }, h('b', { text: '调整：' + a.note })), h('td', { 'data-label': '额度', class: 'num ' + (a.usd > 0 ? 'text-ok' : 'text-bad') }, usd(a.usd)), h('td'), h('td'), h('td', { 'data-label': '按汇率', class: 'num' }, cny(a.usd * r.rate))))),
         h('tfoot', {}, footer))) :
-        h('div', { class: 'card-body muted small', text: p ? '上次结算以来还没有产生额度' : '预估生成中，请稍后刷新' }));
-    // 每日
+        h('div', { class: 'card-body muted small', text: p && p.valid ? '上次结算以来还没有产生额度' : '预估更新中，请稍后刷新' }));
     const days = r.daily.slice(0, 30);
     const chart = barChart([...days].reverse().map((d) => ({ label: d.day, value: d.rows.reduce((a, x) => a + x.usd, 0), live: dayStatus(d)[1] === '今日实时' })), { sub: (pt) => '按汇率 ' + cny(pt.value * r.rate) });
     const dailyRows = [];
     for (const d of days) {
       const u = d.rows.reduce((a, x) => a + x.usd, 0);
       const [bc, bt] = dayStatus(d);
-      const exp = h('tr', { class: 'exp-row', hidden: true }, h('td', { colspan: '5' }, itemsTable(d.rows, info)));
+      const exp = h('tr', { class: 'exp-row', hidden: true }, h('td', { colspan: '5' }, windowsTable(d.rows.map((x) => Object.assign({ account_key: x.key }, x)), info)));
       const tr = h('tr', { class: d.rows.length ? 'click' : '', onclick: () => { if (!d.rows.length) return; exp.hidden = !exp.hidden; tr.classList.toggle('open', !exp.hidden); } },
         h('td', { 'data-label': '' }, h('b', { text: d.day })), h('td', { 'data-label': '额度', class: 'num money-strong' }, usd(u)), h('td', { 'data-label': '按汇率', class: 'num' }, cny(u * r.rate)),
         h('td', { 'data-label': '账号' }, h('div', { class: 'chips' }, d.rows.filter((x) => x.usd > 0).map((x) => h('span', { class: 'chip', text: `${(info[x.key] && info[x.key].name) || x.name} ${usd(x.usd)}` })))),
@@ -1867,27 +2020,392 @@
       h('div', { class: 'card-head' }, h('h3', { class: 'card-title' }, icon('chart'), '每日额度'), h('span', { class: 'faint xs', text: '按你现在名下的账号统计；实际收入以结算单为准' })),
       h('div', { class: 'card-body' }, chart),
       h('div', { class: 'table-wrap' }, h('table', { class: 'table responsive' }, h('thead', {}, h('tr', {}, ['日期', '额度', '按汇率', '账号', '状态'].map((t) => h('th', { text: t })))), h('tbody', {}, dailyRows))));
-    // 结算记录
     const hist = h('div', { class: 'card' },
       h('div', { class: 'card-head' }, h('h3', { class: 'card-title' }, icon('log'), '结算记录')),
       r.settlements.length ? h('div', { class: 'table-wrap' }, h('table', { class: 'table responsive' },
         h('thead', {}, h('tr', {}, ['结算区间', '额度', '调整', '回本·不分成', '收入', '付款', ''].map((t) => h('th', { text: t })))),
         h('tbody', {}, r.settlements.flatMap((s) => {
           const L = s.line;
-          const exp = h('tr', { class: 'exp-row', hidden: true }, h('td', { colspan: '7' }, itemsTable(s.items.map((i) => Object.assign({ key: i.account_key }, i)), info),
+          if (!L) return [];
+          const exp = h('tr', { class: 'exp-row', hidden: true }, h('td', { colspan: '7' }, windowsTable(s.items, info),
             L.cost_total_cny ? h('div', { style: { marginTop: '8px' } }, lineRecovery(L)) : null,
             h('div', { class: 'faint xs', style: { marginTop: '6px' }, text: `毛收入 ${cny(L.gross_cny)} = 回本 ${cny(L.recover_cny)}（全归你） + 参与分成 ${cny(L.shared_cny)}（你得 ${r2(100 - L.admin_share)}%）` })));
           const tr = h('tr', { class: 'click', onclick: () => { exp.hidden = !exp.hidden; tr.classList.toggle('open', !exp.hidden); } },
             h('td', { 'data-label': '' }, h('b', { text: `#${s.id}` }), h('div', { class: 'small muted', text: rangeText(s.start_at, s.end_at) })),
             h('td', { 'data-label': '额度', class: 'num' }, usd(L.usd)), h('td', { 'data-label': '调整', class: 'num ' + (L.adjust_usd ? '' : 'faint') }, L.adjust_usd ? usd(L.adjust_usd) : '—'),
             h('td', { 'data-label': '回本·不分成', class: 'num ' + (L.recover_cny ? 'text-warn' : 'faint') }, L.recover_cny ? cny(L.recover_cny) : '—'),
-            h('td', { 'data-label': '收入', class: 'num money-strong' }, cny(L.member_cny)),
+            h('td', { 'data-label': '收入', class: 'num' }, h('div', { class: 'money-strong', text: cny(L.member_cny) }), payText(s) ? h('div', { class: 'xs text-info', text: payText(s) }) : null),
             h('td', { 'data-label': '付款' }, L.paid_at ? h('span', { class: 'badge b-ok', title: L.paid_note || '', text: '已付 ' + fmtTime(L.paid_at, true).slice(5) }) : h('span', { class: 'badge b-warn', text: '未付款' }), L.paid_note ? h('div', { class: 'faint xs', text: L.paid_note }) : null),
             h('td', { class: 'faint' }, icon('down', 'icon icon-sm chev')));
           return [tr, exp];
         })))) : h('div', { class: 'card-body muted small', text: '还没有结算记录' }));
     clear(body, rule, stats, rec, pend, daily, hist);
   }
+
+  // ============================================================
+  // 统计看板（管理员）
+  // ============================================================
+  let echartsP = null;
+  function loadECharts() {
+    if (window.echarts) return Promise.resolve(window.echarts);
+    if (!echartsP) {
+      echartsP = new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = 'vendor/echarts-6.1.0.min.js';
+        s.onload = () => (window.echarts ? resolve(window.echarts) : reject(new Error('echarts')));
+        s.onerror = () => { echartsP = null; s.remove(); reject(new ApiError(0, 'chart_load_failed')); };
+        document.head.append(s);
+      });
+    }
+    return echartsP;
+  }
+  ERR.chart_load_failed = '图表组件加载失败，请刷新页面';
+  const PALETTE = ['#3b82f6', '#8b5cf6', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#ec4899', '#6366f1', '#14b8a6', '#84cc16', '#f97316', '#a855f7', '#0ea5e9', '#94a3b8'];
+  const escHtml = (s) => String(s === null || s === undefined ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const reduceMotion = () => window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  function chartTheme() {
+    const cs = getComputedStyle(document.documentElement);
+    const dark = document.documentElement.classList.contains('dark');
+    const v = (k, d) => cs.getPropertyValue(k).trim() || d;
+    return { dark, text: v('--text-2', '#334155'), strong: v('--text', '#0f172a'), muted: v('--muted', '#64748b'), border: dark ? 'rgba(148,163,184,.14)' : 'rgba(148,163,184,.28)', tipBg: dark ? 'rgba(15,23,42,.94)' : 'rgba(255,255,255,.97)', card: dark ? '#0f172a' : '#ffffff' };
+  }
+  const dotCls = (c) => { const x = typeof c === 'string' ? c : c && c.colorStops ? c.colorStops[0].color : ''; const i = PALETTE.indexOf(x); return i >= 0 ? 'cd' + i : 'cdx'; };
+  function axisTip(fmt, { max = 12, total = null } = {}) {
+    return (ps) => {
+      ps = Array.isArray(ps) ? ps : [ps];
+      if (!ps.length) return '';
+      const items = ps.filter((p) => typeof p.value === 'number' && Math.abs(p.value) > 1e-9);
+      items.sort((a, b) => (b.seriesType === 'line') - (a.seriesType === 'line') || b.value - a.value);
+      let html = `<div class="ct-title">${escHtml(ps[0].axisValueLabel || ps[0].name || '')}</div>`;
+      for (const p of items.slice(0, max)) html += `<div class="ct-row"><i class="ct-dot ${dotCls(p.color)}"></i><span>${escHtml(p.seriesName)}</span><b>${escHtml((fmt[p.seriesName] || fmt._)(p.value))}</b></div>`;
+      if (items.length > max) html += `<div class="ct-more">还有 ${items.length - max} 项</div>`;
+      if (total) { const sum = items.filter((p) => p.seriesType === 'bar').reduce((a, p) => a + p.value, 0); html += `<div class="ct-row ct-total"><span>${escHtml(total)}</span><b>${escHtml(fmt._(sum))}</b></div>`; }
+      if (!items.length) html += '<div class="ct-more">没有数据</div>';
+      return html;
+    };
+  }
+  function baseOpt(t) {
+    const anim = !reduceMotion();
+    return {
+      animation: anim, animationDuration: 1000, animationEasing: 'cubicOut', animationDurationUpdate: 500,
+      textStyle: { fontFamily: getComputedStyle(document.body).fontFamily, color: t.text },
+      grid: { left: 8, right: 14, top: 40, bottom: 6, containLabel: true },
+      tooltip: { trigger: 'axis', confine: true, backgroundColor: t.tipBg, borderColor: t.border, borderWidth: 1, padding: [10, 12], textStyle: { color: t.text, fontSize: 12 },
+        extraCssText: 'border-radius:12px;box-shadow:0 10px 30px rgba(15,23,42,.18);', axisPointer: { type: 'shadow', shadowStyle: { color: t.dark ? 'rgba(148,163,184,.08)' : 'rgba(59,130,246,.06)' } } },
+      legend: { type: 'scroll', top: 0, left: 0, right: 0, textStyle: { color: t.muted, fontSize: 11 }, icon: 'roundRect', itemWidth: 10, itemHeight: 10, itemGap: 12, pageIconColor: t.muted, pageIconInactiveColor: t.border, pageTextStyle: { color: t.muted } },
+    };
+  }
+  const axisX = (t, data, extra) => Object.assign({ type: 'category', data, axisLine: { lineStyle: { color: t.border } }, axisTick: { show: false }, axisLabel: { color: t.muted, fontSize: 11 } }, extra || {});
+  const axisY = (t, fmt, extra) => Object.assign({ type: 'value', splitLine: { lineStyle: { color: t.border, type: 'dashed' } }, axisLabel: { color: t.muted, fontSize: 11, formatter: fmt } }, extra || {});
+  const shortUsd = (v) => (Math.abs(v) >= 1000 ? '$' + (v / 1000).toFixed(v >= 10000 ? 0 : 1) + 'k' : '$' + Math.round(v));
+  const shortCny = (v) => (Math.abs(v) >= 10000 ? '¥' + (v / 10000).toFixed(1) + '万' : '¥' + Math.round(v));
+  function grad(e, c1, c2, horizontal) { return new e.graphic.LinearGradient(0, 0, horizontal ? 1 : 0, horizontal ? 0 : 1, [{ offset: 0, color: c1 }, { offset: 1, color: c2 }]); }
+  function countUp(el, to, fmt, ms = 900) {
+    if (reduceMotion() || !isFinite(to)) { el.textContent = fmt(to); return; }
+    const t0 = performance.now();
+    const step = (t) => { if (!el.isConnected && t - t0 > 50) return; const k = Math.min(1, (t - t0) / ms); el.textContent = fmt(to * (1 - Math.pow(1 - k, 3))); if (k < 1) requestAnimationFrame(step); };
+    requestAnimationFrame(step);
+  }
+  function deltaChip(cur, prev) {
+    if (!prev || !isFinite(prev) || prev <= 0) return null;
+    const p = ((cur - prev) / prev) * 100;
+    return h('span', { class: 'delta ' + (p >= 0 ? 'up' : 'down'), title: '和上一个同样长度的时间段比' }, (p >= 0 ? '↑ ' : '↓ ') + Math.abs(p).toFixed(1) + '%');
+  }
+  function kpiCard(label, value, fmt, iconName, tone, { delta, sub, tip } = {}) {
+    const v = h('div', { class: 'stat-value' });
+    const card = h('div', { class: 'card stat kpi', title: tip || '' }, h('div', { class: 'stat-icon si-' + tone }, icon(iconName)),
+      h('div', { style: { minWidth: 0 } }, h('div', { class: 'stat-label', text: label }), v, h('div', { class: 'stat-sub' }, delta || null, sub ? h('span', { text: sub }) : null)));
+    countUp(v, value, fmt);
+    return card;
+  }
+  function sparkline(vals) {
+    const ns = 'http://www.w3.org/2000/svg', W = 96, H = 26;
+    const svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('viewBox', `0 0 ${W} ${H}`); svg.setAttribute('class', 'spark');
+    const max = Math.max(...vals, 0.0001), n = vals.length;
+    if (n < 2) return svg;
+    const pts = vals.map((v, i) => `${((i / (n - 1)) * W).toFixed(1)},${(H - 2 - (v / max) * (H - 4)).toFixed(1)}`);
+    const area = document.createElementNS(ns, 'path'); area.setAttribute('d', `M0,${H} L${pts.join(' L')} L${W},${H} Z`); area.setAttribute('class', 'spark-area');
+    const line = document.createElementNS(ns, 'polyline'); line.setAttribute('points', pts.join(' ')); line.setAttribute('class', 'spark-line');
+    svg.append(area, line);
+    return svg;
+  }
+  function presetRange(k, min) {
+    const t = bjToday();
+    const dow = (new Date(t + 'T00:00:00Z').getUTCDay() + 6) % 7;
+    const first = t.slice(0, 8) + '01';
+    switch (k) {
+      case 'today': return [t, t];
+      case 'yesterday': return [addDays(t, -1), addDays(t, -1)];
+      case 'week': return [addDays(t, -dow), t];
+      case 'lastweek': return [addDays(t, -dow - 7), addDays(t, -dow - 1)];
+      case 'lastmonth': { const e = addDays(first, -1); return [e.slice(0, 8) + '01', e]; }
+      case '7d': return [addDays(t, -6), t];
+      case '30d': return [addDays(t, -29), t];
+      case 'all': return [min && min > addDays(t, -399) ? min : addDays(t, -399), t];
+      default: return [first, t];
+    }
+  }
+
+  async function pageStats() {
+    const { main } = appLayout({ active: '#/admin/stats', title: '统计看板', desc: '每个账号每天跑了多少额度、带来多少收入和利润' });
+    let preset = localStorage.getItem('polo_stats_preset') || 'month';
+    let range = preset === 'custom' ? (JSON.parse(localStorage.getItem('polo_stats_custom') || 'null') || presetRange('month')) : presetRange(preset, localStorage.getItem('polo_stats_min'));
+    let ownerF = 'all', trendMode = localStorage.getItem('polo_stats_trend') || 'account', pieMode = 'account', sortKey = 'usd', sortDir = -1, data = null, seq = 0;
+    const PRESETS = [['today', '今天'], ['yesterday', '昨天'], ['week', '本周'], ['lastweek', '上周'], ['month', '本月'], ['lastmonth', '上月'], ['7d', '近 7 天'], ['30d', '近 30 天'], ['all', '全部']];
+    const seg = h('div', { class: 'seg seg-wrap' });
+    const fIn = h('input', { class: 'input input-sm', type: 'date', max: bjToday() });
+    const tIn = h('input', { class: 'input input-sm', type: 'date', max: bjToday() });
+    const ownerSel = h('select', { class: 'select select-sm', style: { width: 'auto' } }, h('option', { value: 'all', text: '全部账号' }));
+    const reloadBtn = h('button', { class: 'btn btn-secondary btn-sm btn-icon', type: 'button', title: '重新加载', 'aria-label': '重新加载' }, icon('refresh', 'icon icon-sm'));
+    const info2 = h('div', { class: 'faint xs' });
+    const bar = h('div', { class: 'card stats-bar' }, h('div', { class: 'stats-bar-in' }, seg,
+      h('div', { class: 'row wrap', style: { gap: '6px' } }, fIn, h('span', { class: 'faint', text: '→' }), tIn, ownerSel, reloadBtn)), info2);
+    const body = h('div', { class: 'stats-body' }, h('div', { class: 'stats' }, skeletonStats(4)));
+    append(main, bar, body);
+    const paintSeg = () => clear(seg, PRESETS.map(([k, l]) => h('button', { type: 'button', class: preset === k ? 'on' : '', onclick: () => { preset = k; localStorage.setItem('polo_stats_preset', k); range = presetRange(k, localStorage.getItem('polo_stats_min')); load(); } }, l)));
+    const onDate = () => {
+      if (!fIn.value || !tIn.value) return;
+      range = fIn.value <= tIn.value ? [fIn.value, tIn.value] : [tIn.value, fIn.value];
+      preset = 'custom'; localStorage.setItem('polo_stats_preset', 'custom'); localStorage.setItem('polo_stats_custom', JSON.stringify(range)); load();
+    };
+    fIn.addEventListener('change', onDate); tIn.addEventListener('change', onDate);
+    ownerSel.addEventListener('change', () => { ownerF = ownerSel.value; draw(); });
+    reloadBtn.addEventListener('click', () => load());
+    S.onTheme = () => { if (data) draw(); };
+
+    async function load() {
+      const my = ++seq;
+      paintSeg(); fIn.value = range[0]; tIn.value = range[1];
+      reloadBtn.disabled = true;
+      try {
+        const [d] = await Promise.all([api('GET', `/admin/settle/stats/${range[0]}/${range[1]}`), loadECharts()]);
+        if (my !== seq) return;
+        data = d;
+        rememberUsers(d.users);
+        localStorage.setItem('polo_stats_min', d.stats_from || '');
+        const owners = new Set();
+        for (const day of d.days) for (const r of day.rows) if (r.owner !== null && r.owner !== undefined) owners.add(r.owner);
+        for (const a of d.accounts) if (a.owner) owners.add(a.owner);
+        const keep = ownerF;
+        clear(ownerSel, h('option', { value: 'all', text: '全部账号' }), h('option', { value: 'own', text: '只看自有号' }), [...owners].map((id) => h('option', { value: String(id), text: '归 ' + uname(id) })));
+        ownerSel.value = [...ownerSel.options].some((o) => o.value === keep) ? keep : 'all';
+        ownerF = ownerSel.value;
+        draw();
+      } catch (e) { if (my === seq) clear(body, h('div', { class: 'card' }, h('div', { class: 'card-body' }, emptyState(errText(e), 'warning')))); }
+      finally { if (my === seq) reloadBtn.disabled = false; }
+    }
+
+    function draw() {
+      disposeCharts();
+      const E = window.echarts, t = chartTheme(), rate = data.rate;
+      const info = acctMap(data.accounts);
+      const lo = data.from > (data.stats_from || data.from) ? data.from : (data.stats_from || data.from);
+      const hi = data.to < data.today ? data.to : data.today;
+      const dayList = [];
+      for (let d = lo; d <= hi; d = addDays(d, 1)) dayList.push(d);
+      const byDay = Object.fromEntries(data.days.map((d) => [d.day, d]));
+      const pass = (r) => ownerF === 'all' || (ownerF === 'own' ? r.owner === null || r.owner === undefined : r.owner === Number(ownerF));
+      const acc = {};
+      const daily = dayList.map((day) => ({ day, usd: 0, req: 0, tok: 0, opus: 0, fable: 0, my: 0, member: 0, live: day === data.today, fetched: !!byDay[day] }));
+      const ownerUsd = {};
+      daily.forEach((D, i) => {
+        for (const r of (byDay[D.day] || { rows: [] }).rows) {
+          if (!pass(r)) continue;
+          const out = r.usd * rate, own = r.owner === null || r.owner === undefined;
+          const my = own ? out : (out * r.share) / 100;
+          D.usd += r.usd; D.req += r.requests || 0; D.tok += r.tokens || 0; D.opus += r.opus || 0; D.fable += r.fable || 0; D.my += my; D.member += out - my;
+          const a = acc[r.key] = acc[r.key] || { key: r.key, name: (info[r.key] && info[r.key].name) || r.name || r.key, usd: 0, req: 0, tok: 0, opus: 0, fable: 0, my: 0, member: 0, by: new Array(dayList.length).fill(0), owners: new Set(), active: 0 };
+          a.usd += r.usd; a.req += r.requests || 0; a.tok += r.tokens || 0; a.opus += r.opus || 0; a.fable += r.fable || 0; a.my += my; a.member += out - my;
+          if (!a.by[i] && r.usd > 0) a.active++;
+          a.by[i] += r.usd; a.owners.add(own ? 'own' : r.owner);
+          const ok = own ? 'own' : r.owner;
+          ownerUsd[ok] = (ownerUsd[ok] || 0) + r.usd;
+        }
+      });
+      const accs = Object.values(acc).sort((a, b) => b.usd - a.usd);
+      const sum = (f) => daily.reduce((s, d) => s + d[f], 0);
+      const T = { usd: sum('usd'), req: sum('req'), tok: sum('tok'), my: sum('my'), member: sum('member'), opus: sum('opus'), fable: sum('fable') };
+      const nDays = Math.max(1, daily.filter((d) => d.fetched).length);
+      const best = daily.reduce((b, d) => (d.usd > (b ? b.usd : -1) ? d : b), null);
+      const prev = ownerF === 'all' ? data.prev : null;
+      const ownName = (k) => (k === 'own' ? '自有号' : uname(Number(k)));
+      info2.textContent = `${lo} → ${hi} · ${nDays} 天有数据${data.days.some((d) => d.day === data.today) ? ' · 今天的数据每 15 分钟更新' : ''} · 汇率 ¥${rate}/$ · 利润按当天的归属和抽成比例估算（未扣成员回本），实际以结算单为准`;
+      if (!accs.length && !T.usd) {
+        clear(body, h('div', { class: 'card' }, h('div', { class: 'card-body' }, emptyState(dayList.length ? '这段时间没有额度数据' : `统计从 ${data.stats_from} 开始，这段时间还没有数据`, 'chart'))));
+        return;
+      }
+      // KPI
+      const kpis = h('div', { class: 'stats kpis' },
+        kpiCard('总额度', T.usd, usd, 'dollar', 'blue', { delta: prev && deltaChip(T.usd, prev.usd), sub: `日均 ${usd(T.usd / nDays)}` }),
+        kpiCard('产出（按汇率）', T.usd * rate, cny, 'activity', 'purple', { delta: prev && deltaChip(T.usd, prev.usd), sub: `每 $1 = ¥${rate}` }),
+        kpiCard('我的利润（估）', T.my, cny, 'trend', 'ok', { sub: `自有号 ${cny(accs.filter((a) => a.owners.has('own')).reduce((s, a) => s + a.my, 0))}`, tip: '自有号按汇率全算你的；成员号按当天的抽成比例估算（回本期间实际不抽成），实际以结算单为准' }),
+        kpiCard('成员应得（估）', T.member, cny, 'users', 'cyan', { sub: data.settle.count ? `期间已结算 ${cny(data.settle.member_cny)}` : '期间还没有结算' }),
+        kpiCard('请求', T.req, (v) => compact(Math.round(v)), 'server', 'blue', { delta: prev && deltaChip(T.req, prev.requests), sub: `Token ${compact(T.tok)}` }),
+        kpiCard('活跃账号', accs.filter((a) => a.usd > 0).length, (v) => String(Math.round(v)), 'cube', 'purple', { sub: best && best.usd ? `最高一天 ${best.day.slice(5)} ${usd(best.usd)}` : '' }));
+      // 图表卡片
+      const card = (title, ic, chartCls, tools, sub) => {
+        const el = h('div', { class: 'chart ' + (chartCls || '') });
+        const c = h('div', { class: 'card chart-card' }, h('div', { class: 'card-head' }, h('div', {}, h('h3', { class: 'card-title' }, icon(ic), title), sub ? h('div', { class: 'faint xs', text: sub }) : null), tools || null), h('div', { class: 'card-body chart-body' }, el));
+        return { c, el };
+      };
+      const segOf = (opts, cur, on) => h('div', { class: 'seg seg-sm' }, opts.map(([k, l]) => h('button', { type: 'button', class: cur === k ? 'on' : '', onclick: () => on(k) }, l)));
+      const single = dayList.length === 1;
+      const trend = card(single ? `${dayList[0]} 每小时额度` : '每日额度', 'chart', 'chart-lg',
+        single ? null : segOf([['account', '按账号'], ['owner', '按归属']], trendMode, (k) => { trendMode = k; localStorage.setItem('polo_stats_trend', k); draw(); }),
+        single ? '全池（不区分归属）' : '柱子：每个账号 / 每位成员当天的额度；折线：我的利润（估）');
+      const rank = card('账号贡献排行', 'trend', '', null, '额度从高到低；标签是 额度 · 我的利润（估）');
+      const pie = card('额度占比', 'cube', '', segOf([['account', '按账号'], ['owner', '按归属'], ['model', '按模型']], pieMode, (k) => { pieMode = k; draw(); }));
+      const heat = card('24 小时分布', 'clock', '', null, '全池每小时的额度（北京时间），颜色越深越多');
+      const model = card('模型额度', 'activity', '', null, 'Opus / Fable / 其他模型每天用了多少额度');
+      const reqc = card('请求与 Token', 'server', '', null, '柱子：请求数；折线：Token');
+      // 结算与成本
+      const stl = data.settle;
+      const settleRows = Object.entries(stl.by_user).sort((a, b) => b[1].member_cny - a[1].member_cny);
+      const maxS = Math.max(1, ...settleRows.map(([, x]) => x.member_cny + x.admin_cny));
+      const settleCard = h('div', { class: 'card chart-card' }, h('div', { class: 'card-head' }, h('div', {}, h('h3', { class: 'card-title' }, icon('log'), '期间结算与成本'), h('div', { class: 'faint xs', text: '按结算单生成时间；这是实际金额' }))),
+        h('div', { class: 'card-body' },
+          h('div', { class: 'sum-chips' },
+            h('div', {}, h('small', { text: '结算单' }), h('b', { text: `${stl.count} 张` })),
+            h('div', {}, h('small', { text: '应付成员' }), h('b', { class: 'money-strong', text: cny(stl.member_cny) })),
+            h('div', {}, h('small', { text: '我的抽成' }), h('b', { class: 'text-ok', text: cny(stl.admin_cny) })),
+            h('div', {}, h('small', { text: '其中回本' }), h('b', { class: 'text-warn', text: cny(stl.recover_cny) })),
+            h('div', {}, h('small', { text: '期间新增成本' }), h('b', { text: `${cny(data.costs.cny)}（${data.costs.count} 笔）` }))),
+          settleRows.length ? h('div', { class: 'srows' }, settleRows.map(([uid, x], i) => {
+            const a = h('i', { class: 'sb-m' }), b = h('i', { class: 'sb-a' });
+            a.style.width = (x.member_cny / maxS) * 100 + '%'; b.style.width = (x.admin_cny / maxS) * 100 + '%';
+            a.style.animationDelay = b.style.animationDelay = i * 60 + 'ms';
+            return h('div', { class: 'srow' }, h('div', { class: 'srow-h' }, h('b', { text: uname(Number(uid)) }), h('span', { class: 'faint xs', text: `${x.count} 张 · 成员 ${cny(x.member_cny)} · 我 ${cny(x.admin_cny)}${x.recover_cny ? ` · 回本 ${cny(x.recover_cny)}` : ''}` })), h('div', { class: 'sbar' }, a, b));
+          })) : h('div', { class: 'muted small', style: { marginTop: '10px' }, text: '这段时间没有生成结算单' })));
+      // 账号明细表
+      const tableWrap = h('div', { class: 'table-wrap' });
+      const COLS = [['name', '账号'], ['owner', '归属'], ['usd', '额度'], ['pct', '占比'], ['out', '产出'], ['my', '我的利润（估）'], ['member', '成员应得（估）'], ['avg', '日均'], ['active', '活跃天'], ['req', '请求'], ['tok', 'Token'], ['spark', '走势']];
+      const val = (a, k) => ({ name: a.name, owner: [...a.owners].map(ownName).join('、'), usd: a.usd, pct: a.usd, out: a.usd, my: a.my, member: a.member, avg: a.usd, active: a.active, req: a.req, tok: a.tok }[k]);
+      function drawTable() {
+        const rows = accs.slice().sort((a, b) => { const x = val(a, sortKey), y = val(b, sortKey); return (typeof x === 'string' ? x.localeCompare(y) : x - y) * sortDir; });
+        clear(tableWrap, h('table', { class: 'table responsive acct-table' },
+          h('thead', {}, h('tr', {}, COLS.map(([k, l]) => h('th', { class: k === 'spark' ? '' : 'sortable' + (sortKey === k ? ' sorted' : ''), onclick: k === 'spark' ? null : () => { if (sortKey === k) sortDir = -sortDir; else { sortKey = k; sortDir = typeof val(accs[0], k) === 'string' ? 1 : -1; } drawTable(); } }, l, sortKey === k ? (sortDir > 0 ? ' ↑' : ' ↓') : '')))),
+          h('tbody', {}, rows.map((a) => { const inf = info[a.key] || {}; return h('tr', {},
+            h('td', { 'data-label': '' }, acctLabel(a.key, info, a.name), inf.seat ? h('span', { class: 'chip', style: { marginTop: '3px' }, text: SEAT_CN[inf.seat] + '席位' }) : null),
+            h('td', { 'data-label': '归属', class: 'small' }, [...a.owners].map(ownName).join('、')),
+            h('td', { 'data-label': '额度', class: 'num money-strong', title: usd4(a.usd) }, usd(a.usd)),
+            h('td', { 'data-label': '占比', class: 'num' }, h('div', { class: 'pct-cell' }, h('span', { text: T.usd ? ((a.usd / T.usd) * 100).toFixed(1) + '%' : '—' }), (() => { const i = h('i'); i.style.width = (T.usd ? (a.usd / T.usd) * 100 : 0) + '%'; return h('div', { class: 'pct-bar' }, i); })())),
+            h('td', { 'data-label': '产出', class: 'num' }, cny(a.usd * rate)),
+            h('td', { 'data-label': '我的利润（估）', class: 'num text-ok' }, cny(a.my)),
+            h('td', { 'data-label': '成员应得（估）', class: 'num ' + (a.member ? '' : 'faint') }, a.member ? cny(a.member) : '—'),
+            h('td', { 'data-label': '日均', class: 'num' }, usd(a.usd / nDays)),
+            h('td', { 'data-label': '活跃天', class: 'num' }, `${a.active}/${nDays}`),
+            h('td', { 'data-label': '请求', class: 'num' }, compact(a.req)),
+            h('td', { 'data-label': 'Token', class: 'num' }, compact(a.tok)),
+            h('td', { 'data-label': '走势' }, sparkline(a.by)));
+          })),
+          h('tfoot', {}, h('tr', {}, h('td', { text: `合计 ${accs.length} 个号` }), h('td'), h('td', { class: 'num', text: usd(T.usd) }), h('td', { class: 'num', text: '100%' }), h('td', { class: 'num', text: cny(T.usd * rate) }),
+            h('td', { class: 'num text-ok', text: cny(T.my) }), h('td', { class: 'num', text: cny(T.member) }), h('td', { class: 'num', text: usd(T.usd / nDays) }), h('td'), h('td', { class: 'num', text: compact(T.req) }), h('td', { class: 'num', text: compact(T.tok) }), h('td')))));
+      }
+      drawTable();
+      const exportBtn = h('button', { class: 'btn btn-secondary btn-sm', type: 'button', onclick: () => {
+        const head = ['账号', '邮箱', '归属', '额度(美元)', '产出(人民币)', '我的利润估(人民币)', '成员应得估(人民币)', '请求', 'Token', ...dayList];
+        downloadCsv(`polo-统计-${lo}-${hi}.csv`, [head, ...accs.map((a) => [a.name, (info[a.key] || {}).email || a.key, [...a.owners].map(ownName).join('、'), r2(a.usd), r2(a.usd * rate), r2(a.my), r2(a.member), a.req, a.tok, ...a.by.map((x) => Math.round(x * 10000) / 10000)])]);
+      } }, icon('copy', 'icon icon-sm'), '导出 CSV');
+      const acctCard = h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('div', {}, h('h3', { class: 'card-title' }, icon('server'), '账号明细'), h('div', { class: 'faint xs', text: '点表头排序' })), exportBtn), tableWrap);
+      // 每天每个号（热力表）
+      const mx = Math.max(0.0001, ...accs.flatMap((a) => a.by));
+      const matrix = h('details', { class: 'card matrix-card' }, h('summary', { class: 'card-head' }, h('h3', { class: 'card-title' }, icon('log'), '每天每个号的额度'), h('span', { class: 'faint xs', text: '点开查看' })),
+        h('div', { class: 'table-wrap' }, h('table', { class: 'table matrix' },
+          h('thead', {}, h('tr', {}, h('th', { class: 'sticky-col', text: '账号' }), h('th', { class: 'num', text: '合计' }), dayList.slice().reverse().map((d) => h('th', { class: 'num', text: d.slice(5) })))),
+          h('tbody', {}, accs.map((a) => h('tr', {}, h('td', { class: 'sticky-col' }, acctLabel(a.key, info, a.name)), h('td', { class: 'num money-strong' }, usd(a.usd)),
+            dayList.map((d, i) => i).reverse().map((i) => { const v = a.by[i]; const td = h('td', { class: 'num heat' + (v ? '' : ' faint') }, v ? usd(v) : '—'); if (v) td.style.background = `rgba(${t.dark ? '96,165,250' : '59,130,246'},${(0.06 + 0.5 * (v / mx)).toFixed(3)})`; return td; })))))));
+      const grid = h('div', { class: 'chart-grid' }, h('div', { class: 'span-2' }, trend.c), rank.c, pie.c, heat.c, model.c, reqc.c, settleCard);
+      clear(body, kpis, grid, acctCard, matrix);
+      [...kpis.children, ...grid.children, acctCard, matrix].forEach((el, i) => { el.classList.add('rise'); el.style.animationDelay = Math.min(i, 10) * 45 + 'ms'; });
+
+      // ---- 图表：每日额度
+      const ch1 = mkChart(trend.el);
+      if (single) {
+        const hrs = Array.from({ length: 24 }, (_, i) => i);
+        const hv = hrs.map((hh) => { const x = data.hourly.find((r) => r.day === dayList[0] && r.hour === hh); return x ? x.usd : 0; });
+        ch1.setOption(Object.assign(baseOpt(t), { legend: { show: false }, tooltip: Object.assign(baseOpt(t).tooltip, { formatter: axisTip({ _: usd }) }),
+          xAxis: axisX(t, hrs.map((x) => String(x).padStart(2, '0') + ':00')), yAxis: axisY(t, shortUsd),
+          series: [{ name: '额度', type: 'bar', data: hv, barMaxWidth: 26, itemStyle: { color: grad(E, '#60a5fa', '#7c3aed'), borderRadius: [6, 6, 0, 0] }, animationDelay: (i) => i * 30 }] }));
+      } else {
+        let groups;
+        if (trendMode === 'owner') {
+          const keys = Object.keys(ownerUsd).sort((a, b) => ownerUsd[b] - ownerUsd[a]);
+          groups = keys.map((k) => ({ name: ownName(k), vals: daily.map((D) => (byDay[D.day] || { rows: [] }).rows.filter((r) => pass(r) && ((r.owner === null || r.owner === undefined) ? 'own' : String(r.owner)) === String(k)).reduce((s, r) => s + r.usd, 0)) }));
+        } else {
+          const top = accs.slice(0, 9), rest = accs.slice(9);
+          groups = top.map((a) => ({ name: a.name, vals: a.by }));
+          if (rest.length) groups.push({ name: `其他 ${rest.length} 个`, vals: daily.map((_, i) => rest.reduce((s, a) => s + a.by[i], 0)) });
+        }
+        const fmt = { _: usd, '我的利润（估）': cny };
+        ch1.setOption(Object.assign(baseOpt(t), {
+          tooltip: Object.assign(baseOpt(t).tooltip, { formatter: axisTip(fmt, { total: '额度合计' }) }),
+          grid: { left: 8, right: 8, top: 44, bottom: dayList.length > 20 ? 40 : 6, containLabel: true },
+          dataZoom: dayList.length > 20 ? [{ type: 'slider', height: 18, bottom: 6, start: Math.max(0, 100 - (20 / dayList.length) * 100), end: 100, borderColor: t.border, textStyle: { color: t.muted }, fillerColor: 'rgba(99,102,241,.12)', handleStyle: { color: '#6366f1' } }, { type: 'inside' }] : [],
+          xAxis: axisX(t, dayList.map((d) => d.slice(5))),
+          yAxis: [axisY(t, shortUsd), axisY(t, shortCny, { splitLine: { show: false } })],
+          series: [...groups.map((g, i) => ({ name: g.name, type: 'bar', stack: 'u', data: g.vals.map((v) => Math.round(v * 10000) / 10000), barMaxWidth: 34, emphasis: { focus: 'series' },
+            itemStyle: { color: PALETTE[i % PALETTE.length], borderRadius: i === groups.length - 1 ? [5, 5, 0, 0] : 0 }, animationDelay: (idx) => idx * 28 + i * 40 })),
+          { name: '我的利润（估）', type: 'line', yAxisIndex: 1, smooth: true, symbol: 'circle', symbolSize: 6, showSymbol: dayList.length <= 31, data: daily.map((D) => r2(D.my)),
+            lineStyle: { width: 2.5, color: '#10b981' }, itemStyle: { color: '#10b981' }, areaStyle: { color: grad(E, 'rgba(16,185,129,.22)', 'rgba(16,185,129,0)') }, z: 5, animationDelay: 300 }],
+        }));
+      }
+      // ---- 排行
+      const topN = accs.slice(0, 12);
+      rank.el.style.height = Math.max(240, topN.length * 30 + 40) + 'px';
+      const ch2 = mkChart(rank.el);
+      ch2.setOption(Object.assign(baseOpt(t), { legend: { show: false }, grid: { left: 8, right: 110, top: 6, bottom: 6, containLabel: true },
+        tooltip: Object.assign(baseOpt(t).tooltip, { trigger: 'item', formatter: (p) => { const a = topN[p.dataIndex]; return `<div class="ct-title">${escHtml(a.name)}</div><div class="ct-row"><span>额度</span><b>${usd(a.usd)}</b></div><div class="ct-row"><span>产出</span><b>${cny(a.usd * rate)}</b></div><div class="ct-row"><span>我的利润（估）</span><b>${cny(a.my)}</b></div><div class="ct-row"><span>占比</span><b>${T.usd ? ((a.usd / T.usd) * 100).toFixed(1) : 0}%</b></div>`; } }),
+        xAxis: axisY(t, shortUsd), yAxis: axisX(t, topN.map((a) => a.name), { inverse: true, axisLabel: { color: t.text, fontSize: 12, fontWeight: 600 } }),
+        series: [{ type: 'bar', data: topN.map((a, i) => ({ value: Math.round(a.usd * 100) / 100, itemStyle: { color: grad(E, PALETTE[i % 8], PALETTE[(i + 1) % 8], true), borderRadius: [0, 6, 6, 0] } })), barMaxWidth: 18,
+          label: { show: true, position: 'right', color: t.muted, fontSize: 11, formatter: (p) => `${shortUsd(p.value)} · ${shortCny(topN[p.dataIndex].my)}` }, animationDelay: (i) => i * 60, showBackground: true, backgroundStyle: { color: t.dark ? 'rgba(148,163,184,.06)' : 'rgba(148,163,184,.08)', borderRadius: [0, 6, 6, 0] } }] }));
+      // ---- 占比
+      let slices;
+      if (pieMode === 'owner') slices = Object.entries(ownerUsd).sort((a, b) => b[1] - a[1]).map(([k, v]) => ({ name: ownName(k), value: v }));
+      else if (pieMode === 'model') slices = [{ name: 'Opus', value: T.opus }, { name: 'Fable', value: T.fable }, { name: '其他模型', value: Math.max(0, T.usd - T.opus - T.fable) }].filter((x) => x.value > 0);
+      else { slices = accs.slice(0, 9).map((a) => ({ name: a.name, value: a.usd })); const rest = accs.slice(9).reduce((s, a) => s + a.usd, 0); if (rest > 0) slices.push({ name: '其他', value: rest }); }
+      slices = slices.map((x, i) => ({ name: x.name, value: Math.round(x.value * 100) / 100, itemStyle: { color: PALETTE[i % PALETTE.length] } }));
+      const ch3 = mkChart(pie.el);
+      ch3.setOption(Object.assign(baseOpt(t), {
+        legend: Object.assign(baseOpt(t).legend, { top: 'auto', bottom: 0 }),
+        tooltip: Object.assign(baseOpt(t).tooltip, { trigger: 'item', formatter: (p) => `<div class="ct-title">${escHtml(p.name)}</div><div class="ct-row"><i class="ct-dot ${dotCls(p.color)}"></i><span>额度</span><b>${usd(p.value)}</b></div><div class="ct-row"><span>占比</span><b>${p.percent}%</b></div><div class="ct-row"><span>产出</span><b>${cny(p.value * rate)}</b></div>` }),
+        title: { text: shortUsd(T.usd), subtext: '总额度', left: 'center', top: '36%', textStyle: { color: t.strong, fontSize: 20, fontWeight: 750 }, subtextStyle: { color: t.muted, fontSize: 11 } },
+        series: [{ type: 'pie', radius: ['50%', '74%'], center: ['50%', '45%'], avoidLabelOverlap: true, padAngle: 2, itemStyle: { borderRadius: 8, borderColor: t.card, borderWidth: 2 },
+          label: { show: false }, emphasis: { scale: true, scaleSize: 8, label: { show: false } }, data: slices, animationType: 'expansion', animationEasing: 'cubicOut', animationDuration: 1100 }],
+      }));
+      // ---- 24 小时热力图
+      const hdays = dayList.filter((d) => data.hourly.some((r) => r.day === d));
+      const ch4 = mkChart(heat.el);
+      if (hdays.length) {
+        const vals = data.hourly.filter((r) => hdays.includes(r.day)).map((r) => [r.hour, hdays.indexOf(r.day), Math.round(r.usd * 100) / 100]);
+        const vmax = Math.max(1, ...vals.map((v) => v[2]));
+        heat.el.style.height = Math.max(240, Math.min(hdays.length, 31) * 18 + 80) + 'px';
+        ch4.setOption(Object.assign(baseOpt(t), { legend: { show: false }, grid: { left: 8, right: 10, top: 10, bottom: 46, containLabel: true },
+          tooltip: Object.assign(baseOpt(t).tooltip, { trigger: 'item', formatter: (p) => `<div class="ct-title">${escHtml(hdays[p.value[1]])} ${String(p.value[0]).padStart(2, '0')}:00</div><div class="ct-row"><span>额度</span><b>${usd(p.value[2])}</b></div>` }),
+          xAxis: axisX(t, Array.from({ length: 24 }, (_, i) => String(i)), { splitArea: { show: false } }), yAxis: axisX(t, hdays.map((d) => d.slice(5)), { inverse: true }),
+          visualMap: { min: 0, max: vmax, calculable: false, orient: 'horizontal', left: 'center', bottom: 0, itemHeight: 140, itemWidth: 10, textStyle: { color: t.muted, fontSize: 10 }, formatter: (v) => shortUsd(v),
+            inRange: { color: t.dark ? ['#1e293b', '#1e40af', '#6366f1', '#a855f7'] : ['#eff6ff', '#93c5fd', '#3b82f6', '#6d28d9'] } },
+          series: [{ type: 'heatmap', data: vals, itemStyle: { borderRadius: 3, borderColor: t.card, borderWidth: 1 }, emphasis: { itemStyle: { shadowBlur: 8, shadowColor: 'rgba(0,0,0,.25)' } }, animationDuration: 800 }] }));
+      } else ch4.setOption({ title: { text: '这段时间还没有按小时的数据（后台正在补算）', left: 'center', top: 'middle', textStyle: { color: t.muted, fontSize: 12, fontWeight: 400 } } });
+      // ---- 模型额度
+      const ch5 = mkChart(model.el);
+      const mk = (name, vals, c) => ({ name, type: 'line', stack: 'm', smooth: true, symbol: 'none', data: vals.map((v) => Math.round(v * 100) / 100), lineStyle: { width: 1.5, color: c }, itemStyle: { color: c }, areaStyle: { color: grad(E, c + 'cc', c + '22') }, emphasis: { focus: 'series' } });
+      ch5.setOption(Object.assign(baseOpt(t), { tooltip: Object.assign(baseOpt(t).tooltip, { axisPointer: { type: 'line', lineStyle: { color: t.border } }, formatter: axisTip({ _: usd }) }),
+        xAxis: axisX(t, single ? [dayList[0].slice(5)] : dayList.map((d) => d.slice(5)), { boundaryGap: false }), yAxis: axisY(t, shortUsd),
+        series: [mk('Opus', daily.map((D) => D.opus), PALETTE[1]), mk('Fable', daily.map((D) => D.fable), PALETTE[2]), mk('其他模型', daily.map((D) => Math.max(0, D.usd - D.opus - D.fable)), PALETTE[13])] }));
+      // ---- 请求与 Token
+      const ch6 = mkChart(reqc.el);
+      ch6.setOption(Object.assign(baseOpt(t), { tooltip: Object.assign(baseOpt(t).tooltip, { formatter: axisTip({ _: (v) => compact(Math.round(v)) }) }),
+        xAxis: axisX(t, dayList.map((d) => d.slice(5))), yAxis: [axisY(t, (v) => compact(v)), axisY(t, (v) => compact(v), { splitLine: { show: false } })],
+        series: [{ name: '请求', type: 'bar', data: daily.map((D) => D.req), barMaxWidth: 22, itemStyle: { color: grad(E, '#38bdf8', '#3b82f6'), borderRadius: [5, 5, 0, 0] }, animationDelay: (i) => i * 25 },
+          { name: 'Token', type: 'line', yAxisIndex: 1, smooth: true, symbol: 'none', data: daily.map((D) => D.tok), lineStyle: { width: 2.5, color: PALETTE[6] }, itemStyle: { color: PALETTE[6] } }] }));
+    }
+    load();
+  }
+  function mkChart(el) { const c = window.echarts.init(el, null, { renderer: 'canvas' }); S.charts.push(c); return c; }
+  function disposeCharts() { (S.charts || []).forEach((c) => { try { c.dispose(); } catch { /* ignore */ } }); S.charts = []; }
+  window.addEventListener('resize', () => { clearTimeout(S.resizeT); S.resizeT = setTimeout(() => (S.charts || []).forEach((c) => c.resize()), 120); });
+  new MutationObserver(() => { if (S.onTheme) setTimeout(() => S.onTheme && S.onTheme(), 30); }).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
 
   // ============================================================
   // 管理：账号选择器
@@ -1948,7 +2466,7 @@
   async function pageUsers() {
     const { main } = appLayout({ active: '#/admin/users', title: '用户管理', desc: '审批注册、分配可见账号、停用或重置密码' });
     let users = [], filter = 'all';
-    const search = leadInput('search', { class: 'input input-sm has-lead', placeholder: '搜索用户名', type: 'search' });
+    const search = leadInput('search', { class: 'input input-sm has-lead', placeholder: '搜索用户名或备注', type: 'search' });
     search.wrap.style.width = '220px';
     const seg = h('div', { class: 'seg' });
     const segs = [['all', '全部'], ['pending', '待审批'], ['active', '正常'], ['disabled', '已停用']];
@@ -1977,10 +2495,16 @@
       accountOptions().then((all) => {
         const picker = accountPicker(all, u.accounts);
         modal({
-          title: `${u.username} 可以查看的账号`, wide: true, body: picker.el,
+          title: `${nameOf(u)} 可以查看的账号`, wide: true, body: picker.el,
           actions: [{ label: '取消' }, { label: '保存', kind: 'btn-primary', onClick: async () => !!(await act(u, 'accounts', { accounts: picker.get() }, '可见账号已更新')) }],
         });
       }).catch((e) => toast(errText(e), 'bad'));
+    }
+    function editNickname(u) {
+      const inp = h('input', { class: 'input', maxlength: '32', value: u.nickname || '', placeholder: '例如：小王 / 老张的号' });
+      modal({ title: `备注昵称 · ${u.username}`, body: h('div', {}, field('备注昵称', inp, '只有管理员能看到；管理页面里优先显示备注。留空则清除。')),
+        actions: [{ label: '取消' }, { label: '保存', kind: 'btn-primary', onClick: async () => !!(await act(u, 'nickname', { nickname: inp.value.trim() }, inp.value.trim() ? '备注已保存' : '备注已清除')) }] });
+      setTimeout(() => inp.focus(), 50);
     }
     async function resetPassword(u) {
       if (!(await confirmBox('重置密码', `将为 ${u.username} 生成一个临时密码，并让 TA 当前的登录全部失效。用户用临时密码登录后需要立即修改。`, { okText: '重置' }))) return;
@@ -1998,6 +2522,7 @@
     function moreMenu(btn, u, self) {
       const admin = u.role === 'admin';
       menu(btn, [
+        { label: u.nickname ? '修改备注' : '添加备注', icon: 'user', onClick: () => editNickname(u) },
         { label: '重置密码', icon: 'key', disabled: self, onClick: () => resetPassword(u) },
         u.status === 'disabled'
           ? { label: '启用账号', icon: 'check', onClick: () => act(u, 'enable', null, `已启用 ${u.username}`) }
@@ -2011,7 +2536,7 @@
     }
     function draw() {
       const q = search.input.value.trim().toLowerCase();
-      const list = users.filter((u) => (filter === 'all' || u.status === filter) && (!q || u.username.toLowerCase().includes(q)));
+      const list = users.filter((u) => (filter === 'all' || u.status === filter) && (!q || u.username.toLowerCase().includes(q) || (u.nickname || '').toLowerCase().includes(q)));
       count.textContent = `共 ${users.length} 个用户`;
       const pend = users.filter((u) => u.status === 'pending').length;
       clear(notice, pend ? h('div', { class: 'notice n-warn' }, icon('clock'), h('span', { text: `有 ${pend} 个注册等待审批。` })) : null);
@@ -2033,8 +2558,10 @@
             h('button', { class: 'btn btn-secondary btn-xs', type: 'button', disabled: u.role === 'admin', title: u.role === 'admin' ? '管理员可以查看全部账号' : null, onclick: () => editAccounts(u) }, '可见账号'),
             more);
         return h('tr', {},
-          h('td', { 'data-label': '' }, h('div', { class: 'row' }, h('span', { class: 'avatar', text: u.username.slice(0, 1) }),
-            h('div', {}, h('div', { class: 'cell-title', text: u.username }),
+          h('td', { 'data-label': '' }, h('div', { class: 'row' }, h('span', { class: 'avatar', text: nameOf(u).slice(0, 1) }),
+            h('div', {}, h('div', { class: 'row', style: { gap: '6px' } }, h('div', { class: 'cell-title', text: nameOf(u) }),
+              h('button', { class: 'btn btn-ghost btn-xs nick-btn', type: 'button', title: '修改备注昵称', onclick: () => editNickname(u) }, u.nickname ? '改备注' : '+ 备注')),
+              u.nickname ? h('div', { class: 'cell-sub mono', text: u.username }) : null,
               h('div', { class: 'row', style: { gap: '4px', marginTop: '2px' } },
                 u.role === 'admin' ? h('span', { class: 'badge b-purple plain', text: '管理员' }) : h('span', { class: 'badge b-gray plain', text: '普通用户' }),
                 self ? h('span', { class: 'badge b-blue plain', text: '当前登录' }) : null)))),
@@ -2050,6 +2577,7 @@
         const r = await api('GET', '/admin/users');
         await accountOptions().catch(() => null);
         users = r.users;
+        rememberUsers(users);
         S.pending = users.filter((u) => u.status === 'pending').length; S.pendingAt = Date.now();
         const badge = document.querySelector('.side-link .count');
         if (badge) { badge.hidden = !S.pending; badge.textContent = S.pending || ''; }
