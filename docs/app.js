@@ -535,6 +535,15 @@
     ], h('div', {}, h('b', { text: S.user.username }), ' · ', isAdmin() ? '管理员' : '普通用户')));
 
     const main = h('main', { class: 'content' });
+    // 手机底部导航（宽度 ≤ 760px 时显示）：常用页面一键切换，其余放在“更多”里（打开侧边栏）
+    const bnBadge = h('span', { class: 'count', hidden: true });
+    const BN = isAdmin()
+      ? [['#/dashboard', 'chart', '看板'], ['#/admin/stats', 'trend', '统计'], ['#/admin/settle', 'dollar', '结算'], ['#/admin/users', 'users', '用户', bnBadge]]
+      : [['#/dashboard', 'chart', '看板'], ['#/archived', 'archive', '已归档'], ['#/earnings', 'dollar', '收益'], ['#/settings', 'cog', '设置']];
+    const inBn = BN.some(([hs]) => hs === active);
+    const bottomNav = locked ? null : h('nav', { class: 'bottom-nav', 'aria-label': '快速导航' },
+      BN.map(([hs, ic, label, badge]) => h('a', { class: 'bn-item' + (active === hs ? ' active' : ''), href: hs }, h('span', { class: 'bn-ic' }, icon(ic), badge || null), h('span', { text: label }))),
+      isAdmin() ? h('button', { class: 'bn-item' + (inBn ? '' : ' active'), type: 'button', onclick: () => toggleSide(true) }, h('span', { class: 'bn-ic' }, icon('menu')), h('span', { text: '更多' })) : null);
     const shell = h('div', { class: 'shell' },
       h('header', { class: 'topbar' },
         h('div', { class: 'row', style: { minWidth: 0 } },
@@ -542,13 +551,13 @@
           h('div', { style: { minWidth: 0 } }, h('h1', { text: title }), desc ? h('p', { text: desc }) : null)),
         h('div', { class: 'row' }, themeButton(), userChip)),
       main);
-    clear(document.getElementById('root'), h('div', { class: 'app' }, h('div', { class: 'bg' }), sidebar, backdrop, shell));
+    clear(document.getElementById('root'), h('div', { class: 'app' + (bottomNav ? ' has-bn' : '') }, h('div', { class: 'bg' }), sidebar, backdrop, shell, bottomNav));
 
-    if (isAdmin() && !locked) refreshPending(pendingBadge);
+    if (isAdmin() && !locked) refreshPending([pendingBadge, bnBadge]);
     return { main };
   }
-  async function refreshPending(badge) {
-    const paint = () => { badge.hidden = !S.pending; badge.textContent = S.pending || ''; };
+  async function refreshPending(badges) {
+    const paint = () => { for (const badge of badges) { badge.hidden = !S.pending; badge.textContent = S.pending || ''; } };
     paint();
     if (Date.now() - S.pendingAt < 60000) return;
     S.pendingAt = Date.now();
@@ -559,6 +568,11 @@
     } catch { /* ignore */ }
   }
 
+  // 说明文字：电脑上默认展开，手机上默认收起（点标题展开）
+  const isPhone = () => window.matchMedia('(max-width: 760px)').matches;
+  function howTo(title, ...content) {
+    return h('details', { class: 'howto', open: !isPhone() }, h('summary', {}, h('b', { text: title }), h('span', { class: 'howto-tip', text: '点开看说明' })), ...content);
+  }
   function statCard(label, value, iconName, tone = 'blue', sub) {
     return h('div', { class: 'card stat' },
       h('div', { class: 'stat-icon si-' + tone }, icon(iconName)),
@@ -885,15 +899,22 @@
           h('i'), h('span', { title: '最近 24 小时', text: `24h 请求 ${dash(hl.requests_24h)}` }), h('span', { text: `限流 ${dash(hl.rate_limits_24h)}` }), h('span', { text: `成功率 ${dash(hl.success_24h)}` }))));
   }
   const isAbnormal = (r) => (r.state && r.state !== '启用') || (r.detail && ((r.detail.status && r.detail.status !== '正常') || r.detail.cooldown_text || (r.detail.proxy && r.detail.proxy.mode === 'proxy' && r.detail.proxy.health && r.detail.proxy.health !== '可用')));
+  // 排序：下拉选按什么排，旁边的按钮切换方向。fn 返回 null = 没有数据，不管正序倒序都排在最后。
+  const pctOf = (k) => (r) => (r.quota && r.quota[k] && typeof r.quota[k].used_pct === 'number' ? r.quota[k].used_pct : null);
+  const resetOf = (k) => (r) => { const q = r.quota && r.quota[k]; return q && q.reset_at ? toDate(q.reset_at).getTime() : null; };
   const SORTS = {
-    '7d': { label: '7d 用量从高到低', fn: (r) => (r.quota && r.quota['7d'] && typeof r.quota['7d'].used_pct === 'number' ? r.quota['7d'].used_pct : -1), desc: true },
-    '5h': { label: '5h 用量从高到低', fn: (r) => (r.quota && r.quota['5h'] && typeof r.quota['5h'].used_pct === 'number' ? r.quota['5h'].used_pct : -1), desc: true },
-    reset: { label: '5h 最先重置', fn: (r) => { const q = r.quota && r.quota['5h']; const t = q && q.reset_at ? toDate(q.reset_at).getTime() : Infinity; return t; }, desc: false },
-    cost: { label: '今日费用从高到低', fn: (r) => toNum(r.detail && r.detail.today && r.detail.today.cost) || 0, desc: true },
-    recent: { label: '最近使用', fn: (r) => (r.detail && r.detail.last_used_at ? toDate(r.detail.last_used_at).getTime() : 0), desc: true },
-    name: { label: '名称', fn: (r) => r.display_name || '', desc: false },
-    ip: { label: '出口 IP', fn: (r) => (ipOf(r) || '~').split('.').map((x) => x.padStart(3, '0')).join('.'), desc: false },
+    '7d': { label: '7d 用量', type: 'num', fn: pctOf('7d'), desc: true },
+    '5h': { label: '5h 用量', type: 'num', fn: pctOf('5h'), desc: true },
+    reset: { label: '5h 重置时间', type: 'time', fn: resetOf('5h'), desc: false },
+    reset7: { label: '7d 重置时间', type: 'time', fn: resetOf('7d'), desc: false },
+    cost: { label: '今日费用', type: 'num', fn: (r) => toNum(r.detail && r.detail.today && r.detail.today.cost) || 0, desc: true },
+    recent: { label: '最近使用', type: 'time', fn: (r) => (r.detail && r.detail.last_used_at ? toDate(r.detail.last_used_at).getTime() : null), desc: true },
+    name: { label: '名称', type: 'text', fn: (r) => r.display_name || null, desc: false },
+    ip: { label: '出口 IP', type: 'text', fn: (r) => { const ip = ipOf(r); return ip ? ip.split('.').map((x) => x.padStart(3, '0')).join('.') : null; }, desc: false },
   };
+  const DIR_TXT = { num: ['从小到大', '从大到小'], time: ['从早到晚', '从晚到早'], text: ['正序 A→Z', '倒序 Z→A'] };
+  // 周额度（7d 窗口）已经用完
+  const weekOut = (r) => { const p = pctOf('7d')(r); return p !== null && p >= 100; };
 
   function autoRefreshControl(onRefresh) {
     const OPTS = [0, 60, 300, 600];
@@ -928,19 +949,30 @@
     const stats = h('div', { class: 'stats' + (admin ? '' : ' s3') }, skeletonStats(admin ? 8 : 6));
     const search = leadInput('search', { class: 'input input-sm has-lead', placeholder: admin ? '搜索账号、邮箱、IP、归属' : '搜索账号、邮箱、IP', type: 'search' });
     search.wrap.style.width = '240px';
+    search.wrap.classList.add('dash-search');
     let filter = 'all';
     let sortKey = localStorage.getItem('polo_sort') || '7d';
     if (!SORTS[sortKey]) sortKey = '7d';
+    let desc = localStorage.getItem('polo_sort_dir') ? localStorage.getItem('polo_sort_dir') === 'desc' : SORTS[sortKey].desc;
+    let showOut = localStorage.getItem('polo_show_weekout') !== '0';
     const seg = h('div', { class: 'seg' });
     const segs = [['all', '全部'], ['high', '高用量'], ['abnormal', '异常']];
     const paintSeg = () => clear(seg, segs.map(([k, l]) => h('button', { type: 'button', class: filter === k ? 'on' : '', onclick: () => { filter = k; paintSeg(); drawTable(); } }, l)));
     paintSeg();
-    const sortSel = h('select', { class: 'select select-sm', style: { width: 'auto' } }, Object.entries(SORTS).map(([k, v]) => h('option', { value: k, selected: k === sortKey, text: v.label })));
+    const sortSel = h('select', { class: 'select select-sm', style: { width: 'auto' }, title: '排序依据' }, Object.entries(SORTS).map(([k, v]) => h('option', { value: k, selected: k === sortKey, text: '按' + v.label })));
+    const dirBtn = h('button', { class: 'btn btn-secondary btn-sm sort-dir', type: 'button', title: '切换排序方向' });
+    const paintDir = () => clear(dirBtn, h('span', { class: 'sd-arrow', text: desc ? '↓' : '↑' }), DIR_TXT[SORTS[sortKey].type][desc ? 1 : 0]);
+    paintDir();
+    dirBtn.addEventListener('click', () => { desc = !desc; localStorage.setItem('polo_sort_dir', desc ? 'desc' : 'asc'); paintDir(); drawTable(); });
+    const outBox = h('input', { type: 'checkbox', checked: showOut });
+    const outCount = h('span', { class: 'faint' });
+    const outToggle = h('label', { class: 'check out-toggle', title: '7d 窗口已用到 100% 的号' }, outBox, h('span', {}, '显示周额度用完的', outCount));
+    outBox.addEventListener('change', () => { showOut = outBox.checked; localStorage.setItem('polo_show_weekout', showOut ? '1' : '0'); drawTable(); });
     let view = localStorage.getItem('polo_view') === 'card' ? 'card' : 'list';
-    const viewSeg = h('div', { class: 'seg', title: '显示方式' });
+    const viewSeg = h('div', { class: 'seg view-seg', title: '显示方式' });
     const paintView = () => clear(viewSeg, [['list', '列表'], ['card', '卡片']].map(([k, l]) => h('button', { type: 'button', class: view === k ? 'on' : '', onclick: () => { view = k; localStorage.setItem('polo_view', k); paintView(); drawTable(); } }, l)));
     paintView();
-    sortSel.addEventListener('change', () => { sortKey = sortSel.value; localStorage.setItem('polo_sort', sortKey); drawTable(); });
+    sortSel.addEventListener('change', () => { sortKey = sortSel.value; desc = SORTS[sortKey].desc; localStorage.setItem('polo_sort', sortKey); localStorage.setItem('polo_sort_dir', desc ? 'desc' : 'asc'); paintDir(); drawTable(); });
     search.input.addEventListener('input', () => drawTable());
     const updated = h('span', { class: 'updated' });
     const refreshBtn = h('button', { class: 'btn btn-primary btn-sm', type: 'button' }, icon('refresh', 'icon icon-sm'), '刷新');
@@ -960,7 +992,7 @@
       h('div', { class: 'card' },
         h('div', { class: 'card-head' },
           h('div', { class: 'row wrap' }, h('h2', { class: 'card-title' }, icon('server'), '账号额度'), countText),
-          h('div', { class: 'toolbar' }, search.wrap, seg, sortSel, viewSeg)),
+          h('div', { class: 'toolbar dash-tools' }, search.wrap, seg, h('div', { class: 'sort-group' }, sortSel, dirBtn), outToggle, viewSeg)),
         h('div', { class: 'card-head', style: { borderBottom: '1px solid var(--border)', paddingTop: '10px', paddingBottom: '10px' } },
           updated, h('div', { class: 'toolbar' }, auto.el, refreshBtn)),
         listBox),
@@ -975,13 +1007,17 @@
       let list = rows.filter((r) => !q || [r.display_name, r.email, ipOf(r), r.seat === 'premium' ? 'team 高级' : r.seat === 'standard' ? 'team 标准 普通' : '待标记', admin ? ownerText(r) : '', ...(r.plan || [])].join(' ').toLowerCase().includes(q));
       if (filter === 'high') list = list.filter((r) => maxPct(r) >= 75);
       if (filter === 'abnormal') list = list.filter(isAbnormal);
+      const nOut = list.filter(weekOut).length;
+      outCount.textContent = `（${nOut}）`;
+      if (!showOut) list = list.filter((r) => !weekOut(r));
       const s = SORTS[sortKey];
       list.sort((a, b) => {
         const x = s.fn(a), y = s.fn(b);
+        if (x === null || y === null) return x === y ? 0 : x === null ? 1 : -1; // 没有数据的始终排最后
         const c = typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y), 'zh-CN', { numeric: true });
-        return s.desc ? -c : c;
+        return desc ? -c : c;
       });
-      countText.textContent = `显示 ${list.length} / ${rows.length} 个`;
+      countText.textContent = `显示 ${list.length} / ${rows.length} 个${!showOut && nOut ? ` · 已隐藏 ${nOut} 个周额度用完的` : ''}`;
       const shared = sharedIps(rows);
       const empty = () => emptyState(rows.length ? '没有符合条件的账号' : (admin ? '暂无账号数据' : '管理员还没有给你分配账号'));
       if (view === 'card') {
@@ -1099,19 +1135,19 @@
       const list = (data && data.proxies) || [];
       const body = !data ? h('p', { class: 'muted', style: { margin: 0 }, text: '暂无数据' })
         : !list.length ? h('div', { class: 'chips' }, Object.entries(data.health_counts || {}).map(([k, v]) => h('span', { class: 'badge ' + (k === '可用' ? 'b-ok' : 'b-warn'), text: `${k} ${v}` })))
-          : h('div', { class: 'table-wrap' }, h('table', { class: 'table' },
+          : h('div', { class: 'table-wrap' }, h('table', { class: 'table responsive' },
             h('thead', {}, h('tr', {}, ['出口 IP', '协议 / 端口', '健康', '成功 / 失败', '使用的账号', '最近使用'].map((t) => h('th', { text: t })))),
             h('tbody', {}, [...list].sort((a, b) => (b.accounts || []).length - (a.accounts || []).length).map((p) => {
               const ip = p.ip || p.host;
               const tone = p.health === '可用' ? (p.latency_ms >= 500 ? 'b-warn' : 'b-ok') : 'b-bad';
               const acc = p.accounts || [];
               return h('tr', {},
-                h('td', {}, h('span', { class: 'mono ip', title: (p.host && p.host !== ip ? `主机名：${p.host}\n` : '') + '点击复制', onclick: () => copy(ip, ' IP') }, dash(ip))),
-                h('td', { class: 'mono small' }, `${dash(p.protocol)} · ${dash(p.port)}`),
-                h('td', {}, h('span', { class: 'badge ' + tone, text: dash(p.health) + (p.latency_ms !== null && p.latency_ms !== undefined ? ` ${p.latency_ms}ms` : '') })),
-                h('td', { class: 'num small' }, `${dash(p.success)} / ${dash(p.fail)}`),
-                h('td', {}, acc.length ? h('div', { class: 'chips' }, acc.map((k) => h('span', { class: 'chip' + (acc.length > 1 ? ' chip-warn' : ' chip-blue'), title: keyText(k), text: names[k] || keyText(k) }))) : h('span', { class: 'faint small', text: '未绑定' })),
-                h('td', { class: 'small nowrap' }, dash(p.last_used)));
+                h('td', { 'data-label': '出口 IP' }, h('span', { class: 'mono ip', title: (p.host && p.host !== ip ? `主机名：${p.host}\n` : '') + '点击复制', onclick: () => copy(ip, ' IP') }, dash(ip))),
+                h('td', { 'data-label': '协议 / 端口', class: 'mono small' }, `${dash(p.protocol)} · ${dash(p.port)}`),
+                h('td', { 'data-label': '健康' }, h('span', { class: 'badge ' + tone, text: dash(p.health) + (p.latency_ms !== null && p.latency_ms !== undefined ? ` ${p.latency_ms}ms` : '') })),
+                h('td', { 'data-label': '成功 / 失败', class: 'num small' }, `${dash(p.success)} / ${dash(p.fail)}`),
+                h('td', { 'data-label': '使用的账号' }, acc.length ? h('div', { class: 'chips' }, acc.map((k) => h('span', { class: 'chip' + (acc.length > 1 ? ' chip-warn' : ' chip-blue'), title: keyText(k), text: names[k] || keyText(k) }))) : h('span', { class: 'faint small', text: '未绑定' })),
+                h('td', { 'data-label': '最近使用', class: 'small nowrap' }, dash(p.last_used)));
             }))));
       return h('div', { class: 'card', style: { gridColumn: '1 / -1' } },
         h('div', { class: 'card-head' }, h('h3', { class: 'card-title' }, icon('globe'), '出站代理', data && data.coverage ? h('span', { class: 'faint xs', style: { fontWeight: 400 }, text: data.coverage }) : null), res && res.sampled_at ? h('span', { class: 'faint xs', text: ago(res.sampled_at) }) : null),
@@ -1408,6 +1444,7 @@
       h('a', { class: 'btn btn-sm btn-ghost', href: '#/admin/stats', style: { textDecoration: 'none' } }, icon('chart', 'icon icon-sm'), '统计看板'));
     const body = h('div', {}, h('div', { class: 'stats' }, skeletonStats(4)));
     append(main, tabs, body);
+    if (isPhone()) { const on = tabs.querySelector('.btn-primary'); if (on) tabs.scrollLeft = Math.max(0, on.offsetLeft - 14); }
     try {
       if (tab === 'pending') await settlePending(body);
       else if (tab === 'upstream') await settleUpstream(body);
@@ -1494,13 +1531,14 @@
   // 账号 + 各自的结算区间
   function windowsTable(items, info) {
     if (!items.length) return h('div', { class: 'muted small', text: '没有账号额度（只有调整项）' });
-    return h('div', { class: 'charges-wrap' }, h('table', { class: 'mini-table' },
-      h('thead', {}, h('tr', {}, ['账号', '结算区间（北京时间）', '额度', '请求', 'Token'].map((t) => h('th', { text: t })))),
+    return h('div', { class: 'charges-wrap' }, h('table', { class: 'mini-table win-table' },
+      h('thead', {}, h('tr', {}, [['账号'], ['结算区间（北京时间）', 'c-range'], ['额度'], ['请求'], ['Token', 'c-tok']].map(([t, k]) => h('th', { class: k || null, text: t })))),
       h('tbody', {}, items.map((i) => {
         const s = i.start !== undefined ? i.start : i.start_at, e = i.end !== undefined ? i.end : i.end_at;
-        return h('tr', {}, h('td', {}, acctLabel(i.account_key || i.key, info, i.name)),
-          h('td', { class: 'small nowrap' }, s ? [h('div', { text: fmtSec(s) }), h('div', { class: 'faint', text: '→ ' + fmtSec(e) })] : '—'),
-          h('td', { class: 'num', title: usd4(i.usd) }, usd(i.usd)), h('td', { class: 'num' }, compact(i.requests)), h('td', { class: 'num' }, compact(i.tokens)));
+        const range = s ? [h('div', { text: fmtSec(s) }), h('div', { class: 'faint', text: '→ ' + fmtSec(e) })] : '—';
+        return h('tr', {}, h('td', {}, acctLabel(i.account_key || i.key, info, i.name), s ? h('div', { class: 'm-only faint xs', text: `${fmtSec(s).slice(5)} → ${fmtSec(e).slice(5)}` }) : null),
+          h('td', { class: 'small nowrap c-range' }, range),
+          h('td', { class: 'num', title: usd4(i.usd) }, usd(i.usd)), h('td', { class: 'num' }, compact(i.requests)), h('td', { class: 'num c-tok' }, compact(i.tokens)));
       }))));
   }
 
@@ -1540,8 +1578,8 @@
       catch (e) { toast(errText(e), 'bad'); refreshBtn.disabled = false; clear(refreshBtn, icon('refresh', 'icon icon-sm'), '刷新预估'); }
     });
     const head = h('div', { class: 'card', style: { marginBottom: '16px' } }, h('div', { class: 'card-body period' },
-      h('div', {}, h('b', { text: '怎么结算' }),
-        h('div', { class: 'hint', text: `点某位成员的“结算”，系统会向 Polo 精确查询他名下每个号从上次结算点到点击时间前 ${Math.round(st.cutoff_lag / 60)} 分钟的额度，算出应付多少人民币（可换成 USDT）；确认后自动写入结算点，下次从下一秒接着算。一天可以结算多次，不会重复、不会漏。` }),
+      h('div', {}, howTo('怎么结算',
+        h('div', { class: 'hint', text: `点某位成员的“结算”，系统会向 Polo 精确查询他名下每个号从上次结算点到点击时间前 ${Math.round(st.cutoff_lag / 60)} 分钟的额度，算出应付多少人民币（可换成 USDT）；确认后自动写入结算点，下次从下一秒接着算。一天可以结算多次，不会重复、不会漏。` })),
         h('div', { class: 'faint xs', style: { marginTop: '4px' }, text: st.pending ? `卡片上的金额是预估（${ago(st.pending.at)}查询，每 15 分钟自动更新）${st.refreshing ? '，正在更新…' : ''}` : '预估生成中…' })),
       h('div', { class: 'toolbar' }, refreshBtn)));
     const grid = ms.length ? h('div', { class: 'mgrid' }, ms.map((m, i) => { const c = memberCard(m, st, info, unpaidBy[m.user_id], rate, reload); c.style.animationDelay = i * 40 + 'ms'; return c; }))
@@ -1734,8 +1772,8 @@
       catch (e) { toast(errText(e), 'bad'); refBtn.disabled = false; clear(refBtn, icon('refresh', 'icon icon-sm'), '刷新'); }
     });
     const head = h('div', { class: 'card', style: { marginBottom: '16px' } }, h('div', { class: 'card-body period' },
-      h('div', {}, h('b', { text: '怎么用' }),
-        h('div', { class: 'hint', text: '上家按整个号池（所有成员的号 + 你自己的号）的总额度给你结算。收到钱后点“添加结算点”，输入这次结算了多少额度（或累计额度、或时间），系统会向 Polo 查出这个额度是在哪一秒达到的，结算点就记在那一秒（不是你录入的时间），下一段从下一秒开始。之后再到“成员待结算”给成员结算，可以选“结算到上家结算点”。' }),
+      h('div', {}, howTo('怎么用',
+        h('div', { class: 'hint', text: '上家按整个号池（所有成员的号 + 你自己的号）的总额度给你结算。收到钱后点“添加结算点”，输入这次结算了多少额度（或累计额度、或时间），系统会向 Polo 查出这个额度是在哪一秒达到的，结算点就记在那一秒（不是你录入的时间），下一段从下一秒开始。之后再到“成员待结算”给成员结算，可以选“结算到上家结算点”。' })),
         h('div', { class: 'faint xs', style: { marginTop: '4px' }, text: p ? `待结算数字 ${ago(p.at)}查询，每 15 分钟自动更新${st.refreshing ? '，正在更新…' : ''}` : '' })),
       h('div', { class: 'toolbar' }, refBtn, addBtn)));
     // 图表
@@ -1841,7 +1879,7 @@
       series: [
         { name: '累计额度', type: 'line', data: line, showSymbol: false, smooth: 0.15, lineStyle: { width: 2.5, color: '#6366f1' }, itemStyle: { color: '#6366f1' },
           areaStyle: { color: grad(E, 'rgba(99,102,241,.28)', 'rgba(99,102,241,0)') },
-          markArea: p && p.usd + (st.carry || 0) > 0 ? { silent: true, itemStyle: { color: 'rgba(245,158,11,.12)' }, label: { show: true, position: 'insideTop', color: '#d97706', fontWeight: 700, formatter: '待结算 ' + usd(p.usd + (st.carry || 0)) },
+          markArea: p && p.usd + (st.carry || 0) > 0 ? { silent: true, itemStyle: { color: 'rgba(245,158,11,.12)' }, label: { show: !isPhone(), position: 'insideTop', color: '#d97706', fontWeight: 700, formatter: '待结算 ' + usd(p.usd + (st.carry || 0)) },
             data: [[{ xAxis: lastEnd * 1000 }, { xAxis: p.end * 1000 }]] } : undefined,
           markLine: pts.length ? { silent: true, symbol: 'none', lineStyle: { color: '#10b981', type: 'dashed', width: 1.2 }, label: { show: false }, data: pts.map((x) => ({ xAxis: x.value[0] })) } : undefined },
         { name: '结算点', type: 'scatter', data: pts, symbolSize: 13, z: 10, itemStyle: { color: '#10b981', borderColor: t.card, borderWidth: 2 },
@@ -2199,12 +2237,15 @@
       const save = h('button', { class: 'btn btn-secondary btn-xs', type: 'button', onclick: async () => {
         try { await api('POST', '/admin/settle/share', { user_id: u.id, admin_share: inp.value === '' ? null : Number(inp.value) }); toast(`已保存 ${nameOf(u)} 的分成`, 'ok'); } catch (e) { toast(errText(e), 'bad'); }
       } }, '保存');
-      return h('tr', {}, h('td', {}, userName2(u.id), u.role === 'admin' ? h('span', { class: 'chip', style: { marginLeft: '6px' }, text: '管理员' }) : null, u.status === 'disabled' ? h('span', { class: 'chip', style: { marginLeft: '6px' }, text: '已停用' }) : null),
-        h('td', { class: 'num', text: owned[u.id] || 0 }), h('td', {}, h('div', { class: 'row' }, inp, h('span', { class: 'faint small', text: '%' }))), h('td', {}, out), h('td', {}, save));
+      return h('tr', {}, h('td', { 'data-label': '' }, userName2(u.id), u.role === 'admin' ? h('span', { class: 'chip', style: { marginLeft: '6px' }, text: '管理员' }) : null, u.status === 'disabled' ? h('span', { class: 'chip', style: { marginLeft: '6px' }, text: '已停用' }) : null),
+        h('td', { 'data-label': '归属账号', class: 'num', text: owned[u.id] || 0 }), h('td', { 'data-label': '我的抽成' }, h('div', { class: 'row' }, inp, h('span', { class: 'faint small', text: '%' }), h('span', { class: 'm-only' }, save))),
+        h('td', { 'data-label': '', class: 'wide' }, out), h('td', { 'data-label': '', class: 'd-only' }, save.cloneNode(true)));
     });
+    // 电脑上用最后一列的“保存”，手机上用输入框旁边的“保存”（cloneNode 不带事件，补上）
+    for (const tr of shareRows) { const [a, b] = tr.querySelectorAll('button'); if (a && b) b.addEventListener('click', () => a.click()); }
     const shares = h('div', { class: 'card', style: { marginBottom: '16px' } },
       h('div', { class: 'card-head' }, h('h3', { class: 'card-title' }, icon('users'), '成员分成'), h('span', { class: 'faint xs', text: '留空 = 用默认抽成；修改从下一次结算起生效；回本前一律不抽成。备注昵称在“用户管理”里改' })),
-      h('div', { class: 'table-wrap' }, h('table', { class: 'table' }, h('thead', {}, h('tr', {}, ['成员', '归属账号', '我的抽成', '', ''].map((t) => h('th', { text: t })))), h('tbody', {}, shareRows))));
+      h('div', { class: 'table-wrap' }, h('table', { class: 'table responsive' }, h('thead', {}, h('tr', {}, ['成员', '归属账号', '我的抽成', '', ''].map((t) => h('th', { text: t })))), h('tbody', {}, shareRows))));
     // 账号归属与成本
     const fill = h('button', { class: 'btn btn-secondary btn-sm', type: 'button', onclick: async () => {
       if (!(await confirmBox('按可见账号一键填充', '只有一位成员能看到、且还没设置归属的号，会归给这位成员。旧号从现在开始算，新号从加入 Polo 时开始算。', { okText: '填充' }))) return;
@@ -2251,15 +2292,15 @@
         cost = h('div', {}, h('span', { class: 'faint small', text: '不计成本' }), h('button', { class: 'btn btn-ghost btn-xs', type: 'button', style: { marginLeft: '6px' }, onclick: () => costPlanModal(a, st, reload) }, '记成本'));
       } else cost = h('span', { class: 'faint', text: '—' });
       const [bc, bt] = STATUS[a.status] || ['b-gray', a.status];
-      return h('tr', {}, h('td', {}, acctLabel(a.key, { [a.key]: Object.assign({}, a, { status: '' }) }, a.name), mapCtl),
-        h('td', {}, h('span', { class: 'badge ' + bc, text: bt }), a.seat ? h('div', { class: 'faint xs', style: { marginTop: '3px' }, text: SEAT_CN[a.seat] + '席位' }) : null),
-        h('td', { class: 'small' }, a.visible.length ? a.visible.map(unameByLogin).join('、') : h('span', { class: 'faint', text: '—' })),
-        h('td', {}, sel, hist), h('td', {}, cost));
+      return h('tr', {}, h('td', { 'data-label': '' }, acctLabel(a.key, { [a.key]: Object.assign({}, a, { status: '' }) }, a.name), mapCtl),
+        h('td', { 'data-label': '状态' }, h('span', { class: 'badge ' + bc, text: bt }), a.seat ? h('div', { class: 'faint xs', style: { marginTop: '3px' }, text: SEAT_CN[a.seat] + '席位' }) : null),
+        h('td', { 'data-label': '能看到的成员', class: 'small' }, a.visible.length ? a.visible.map(unameByLogin).join('、') : h('span', { class: 'faint', text: '—' })),
+        h('td', { 'data-label': '结算归属', class: 'wide' }, sel, hist), h('td', { 'data-label': '成本', class: 'wide' }, cost));
     });
     const owners = h('div', { class: 'card', style: { marginBottom: '16px' } },
       h('div', { class: 'card-head' }, h('div', {}, h('h3', { class: 'card-title' }, icon('server'), '账号归属与成本'),
         h('div', { class: 'faint xs', text: '每个号按时间段归属：换成员时选新成员从哪一秒开始算，旧成员到前一秒为止，各自结算，不重复不遗漏。归属和“可见账号”是分开设置的。新号归给成员时自动记成本，已有的号默认不计（可点“记成本”）。' })), fill),
-      h('div', { class: 'table-wrap' }, h('table', { class: 'table' }, h('thead', {}, h('tr', {}, ['账号', '状态', '能看到的成员', '结算归属', '成本'].map((t) => h('th', { text: t })))), h('tbody', {}, ownRows))));
+      h('div', { class: 'table-wrap' }, h('table', { class: 'table responsive' }, h('thead', {}, h('tr', {}, ['账号', '状态', '能看到的成员', '结算归属', '成本'].map((t) => h('th', { text: t })))), h('tbody', {}, ownRows))));
     const ledger = h('div', { class: 'card' },
       h('div', { class: 'card-head' }, h('h3', { class: 'card-title' }, icon('dollar'), '成本记录'), h('span', { class: 'faint xs', text: '每次开号 / 续费一条，金额按当时的席位价格记下；可以改金额或免除' })),
       h('div', { class: 'card-body' }, chargesTable(st.costs.charges, { admin: true, reload })));
@@ -2305,10 +2346,10 @@
             h('div', {}, h('small', { text: '还差' }), h('b', { class: rc.remaining_cny > 0 ? 'text-warn' : 'text-ok', text: rc.remaining_cny > 0 ? cny(rc.remaining_cny) : '已回本' })))),
         rc.pending_seat ? h('div', { class: 'notice n-warn', style: { marginTop: '12px' } }, icon('warning'), h('span', { text: `有 ${rc.pending_seat} 笔成本的金额待定（账号还没标席位），暂按 ¥0 算。` })) : null,
         h('div', { style: { marginTop: '12px' } }, chargesTable(r.charges)))) : null;
-    const footer = p ? [h('tr', {}, h('td', { text: '合计' }), h('td', { class: 'num', text: usd(r2(p.usd + p.adjust_usd)) }), h('td'), h('td'), h('td', { class: 'num', text: cny(p.gross_cny) }))] : [];
-    if (p && p.recover_cny) footer.push(h('tr', {}, h('td', { colspan: '4', text: '其中回本（全归你，不分成）' }), h('td', { class: 'num text-warn', text: cny(p.recover_cny) })));
-    if (p && p.shared_cny) footer.push(h('tr', {}, h('td', { colspan: '4', text: `参与分成 ${cny(p.shared_cny)} × ${r2(r.member_share)}%` }), h('td', { class: 'num', text: cny(r2(p.shared_cny - p.admin_cny)) })));
-    if (p) footer.push(h('tr', {}, h('td', { colspan: '4', text: '待结算收入（预估）' }), h('td', { class: 'num money-strong', text: cny(p.cny) })));
+    const footer = p ? [h('tr', {}, h('td', { 'data-label': '', text: '合计' }), h('td', { 'data-label': '额度', class: 'num', text: usd(r2(p.usd + p.adjust_usd)) }), h('td'), h('td'), h('td', { 'data-label': '按汇率', class: 'num', text: cny(p.gross_cny) }))] : [];
+    if (p && p.recover_cny) footer.push(h('tr', { class: 'ft-line' }, h('td', { colspan: '4', text: '其中回本（全归你，不分成）' }), h('td', { class: 'num text-warn', text: cny(p.recover_cny) })));
+    if (p && p.shared_cny) footer.push(h('tr', { class: 'ft-line' }, h('td', { colspan: '4', text: `参与分成 ${cny(p.shared_cny)} × ${r2(r.member_share)}%` }), h('td', { class: 'num', text: cny(r2(p.shared_cny - p.admin_cny)) })));
+    if (p) footer.push(h('tr', { class: 'ft-line' }, h('td', { colspan: '4', text: '待结算收入（预估）' }), h('td', { class: 'num money-strong', text: cny(p.cny) })));
     const pend = h('div', { class: 'card', style: { marginBottom: '16px' } },
       h('div', { class: 'card-head' }, h('h3', { class: 'card-title' }, icon('server'), '待结算：各账号贡献'), p && p.start ? h('span', { class: 'muted small', text: rangeText(p.start, p.end) }) : null),
       p && p.valid && (p.rows.length || r.adjustments.length) ? h('div', { class: 'table-wrap' }, h('table', { class: 'table responsive' },
@@ -2644,8 +2685,8 @@
             h('td', { 'data-label': 'Token', class: 'num' }, compact(a.tok)),
             h('td', { 'data-label': '走势' }, sparkline(a.by)));
           })),
-          h('tfoot', {}, h('tr', {}, h('td', { text: `合计 ${accs.length} 个号` }), h('td'), h('td', { class: 'num', text: usd(T.usd) }), h('td', { class: 'num', text: '100%' }), h('td', { class: 'num', text: cny(T.usd * rate) }),
-            h('td', { class: 'num text-ok', text: cny(T.my) }), h('td', { class: 'num', text: cny(T.member) }), h('td', { class: 'num', text: usd(T.usd / nDays) }), h('td'), h('td', { class: 'num', text: compact(T.req) }), h('td', { class: 'num', text: compact(T.tok) }), h('td')))));
+          h('tfoot', {}, h('tr', {}, h('td', { 'data-label': '', text: `合计 ${accs.length} 个号` }), h('td'), h('td', { 'data-label': '额度', class: 'num', text: usd(T.usd) }), h('td', { 'data-label': '占比', class: 'num', text: '100%' }), h('td', { 'data-label': '产出', class: 'num', text: cny(T.usd * rate) }),
+            h('td', { 'data-label': '我的利润（估）', class: 'num text-ok', text: cny(T.my) }), h('td', { 'data-label': '成员应得（估）', class: 'num', text: cny(T.member) }), h('td', { 'data-label': '日均', class: 'num', text: usd(T.usd / nDays) }), h('td'), h('td', { 'data-label': '请求', class: 'num', text: compact(T.req) }), h('td', { 'data-label': 'Token', class: 'num', text: compact(T.tok) }), h('td')))));
       }
       drawTable();
       const exportBtn = h('button', { class: 'btn btn-secondary btn-sm', type: 'button', onclick: () => {

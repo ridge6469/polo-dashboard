@@ -729,3 +729,142 @@ tr:hover .nick-btn { opacity: 1; }
 .stats-scope select.on { border-color: var(--primary); color: var(--primary-text); font-weight: 600; }
 .up-sum { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: baseline; margin-top: 12px; padding: 10px 14px; border-radius: 12px; background: var(--primary-soft); font-size: 13px; }
 .up-sum a { margin-left: auto; font-weight: 600; }
+/* ---------- 排序方向 / 周额度开关 / 说明折叠（全部尺寸） ---------- */
+.sort-group { display: inline-flex; gap: 6px; align-items: center; }
+.sort-dir { white-space: nowrap; gap: 4px; }
+.sort-dir .sd-arrow { font-weight: 800; color: var(--primary-text); }
+.out-toggle { font-size: 12.5px; white-space: nowrap; }
+.out-toggle .faint { margin-left: 2px; }
+.howto > summary { list-style: none; cursor: pointer; display: flex; align-items: baseline; gap: 8px; }
+.howto > summary::-webkit-details-marker { display: none; }
+.howto > summary::after { content: '▾'; color: var(--faint); font-size: 12px; transition: transform .2s; }
+.howto[open] > summary::after { transform: rotate(180deg); }
+.howto-tip { font-size: 12px; color: var(--primary-text); font-weight: 500; }
+.howto[open] .howto-tip { display: none; }
+.howto[open] > summary + * { margin-top: 4px; }
+.bottom-nav { display: none; }
+.m-only { display: none; }
+
+/* ---------- 手机（小米 15 Pro 等，约 412 × 915 CSS 像素） ---------- */
+@media (max-width: 760px) {
+  .m-only { display: initial; }
+  div.m-only { display: block; }
+  .d-only { display: none !important; }
+  /* 顶栏更矮；全面屏 / 添加到桌面时让出状态栏 */
+  .topbar { height: calc(54px + env(safe-area-inset-top)); padding-top: env(safe-area-inset-top); }
+  .topbar h1 { font-size: 16.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .content { padding: 12px 12px 18px; }
+  .app.has-bn .content { padding-bottom: calc(84px + env(safe-area-inset-bottom)); }
+  .card-head { padding: 14px 14px; }
+  .card-body { padding: 14px; }
+  .notice { font-size: 12.5px; }
+
+  /* 底部导航 */
+  .bottom-nav {
+    display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 32;
+    padding: 6px 6px calc(6px + env(safe-area-inset-bottom));
+    background: var(--glass-strong); backdrop-filter: blur(20px) saturate(160%); -webkit-backdrop-filter: blur(20px) saturate(160%);
+    border-top: 1px solid var(--glass-border); box-shadow: 0 -6px 24px rgba(15, 23, 42, .06);
+  }
+  .bn-item {
+    flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+    padding: 2px 0; border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 11px; font-weight: 550;
+    text-decoration: none !important; cursor: pointer; -webkit-tap-highlight-color: transparent;
+  }
+  .bn-ic { position: relative; width: 52px; height: 30px; border-radius: 15px; display: flex; align-items: center; justify-content: center; transition: background .2s; }
+  .bn-ic .icon { width: 21px; height: 21px; }
+  .bn-item.active { color: var(--primary-text); font-weight: 700; }
+  .bn-item.active .bn-ic { background: var(--primary-soft); }
+  .bn-item:active .bn-ic { background: var(--surface-3); }
+  .bn-ic .count { position: absolute; top: -3px; right: 6px; min-width: 17px; padding: 0 5px; border-radius: 999px; background: var(--bad); color: #fff; font-size: 10.5px; line-height: 17px; text-align: center; }
+  .toasts { bottom: calc(76px + env(safe-area-inset-bottom)); }
+  .sidebar { width: min(300px, 84vw); padding-bottom: calc(18px + env(safe-area-inset-bottom)); }
+
+  /* 手指好点：按钮、分段、下拉至少约 36px 高 */
+  .btn-sm { min-height: 36px; padding: 7px 12px; }
+  .btn-xs { min-height: 32px; padding: 5px 10px; }
+  .seg button { min-height: 34px; padding: 6px 12px; }
+  .seg-sm button { min-height: 30px; padding: 4px 10px; }
+  .input-sm, .select-sm { min-height: 38px; font-size: 14px; }
+  .icon-btn { width: 36px; height: 36px; }
+  .check input { width: 18px; height: 18px; }
+  .nick-btn { opacity: 1; }
+
+  /* 用量看板工具栏：搜索一行，筛选 + 显示方式一行，排序一行，周额度开关一行 */
+  .dash-tools { width: 100%; gap: 8px; }
+  .dash-tools > .dash-search { order: 0; flex: 1 1 100%; width: auto !important; }
+  .dash-tools > .seg:not(.view-seg) { order: 1; }
+  .dash-tools > .view-seg { order: 2; margin-left: auto; }
+  .dash-tools > .sort-group { order: 3; flex: 1 1 100%; }
+  .dash-tools > .sort-group select { flex: 1; min-width: 0; }
+  .dash-tools > .out-toggle { order: 4; flex: 1 1 100%; }
+  .agrid { padding: 8px; gap: 10px; }
+
+  /* 结算页标签：一行横向滑动 */
+  .tabs { flex-wrap: nowrap; overflow-x: auto; margin: 0 -12px 12px; padding: 2px 12px 4px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tabs > * { flex-shrink: 0; }
+  .period { gap: 10px; }
+  .period > .toolbar { width: 100%; }
+
+  /* 窄屏表格：两列排布，账号 / 长内容占整行；合计行同样带标签 */
+  .table.responsive tr { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 4px 14px; }
+  .table.responsive td[data-label=""], .table.responsive td.wide, .table.responsive td:not([data-label]),
+  .table.responsive td[data-label="可见账号"], .table.responsive td[data-label="默认账号"], .table.responsive td[data-label="给成员结算"],
+  .table.responsive td[data-label="归档原因"], .table.responsive td[data-label="账号"],
+  .table.responsive td[data-label="走势"], .table.responsive td[data-label="区间"], .table.responsive td[data-label="事件"] { grid-column: 1 / -1; }
+  .table.responsive td:empty { display: none; }
+  .table.responsive td.nowrap, .table.responsive td.small.nowrap { white-space: normal; }
+  .table.responsive tfoot { display: block; }
+  .table.responsive tfoot tr { background: var(--surface-2); }
+  .table.responsive tfoot td { background: transparent; border: 0; padding: 4px 0; }
+  .table.responsive tfoot tr.ft-line { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding-top: 6px; padding-bottom: 6px; border-top: 1px dashed var(--border); }
+  .table.responsive tfoot tr.ft-line td { display: block; width: auto; }
+  .table.responsive tfoot tr.ft-line td.num { text-align: right; white-space: nowrap; }
+  .table.responsive td .pct-cell { justify-content: flex-start; }
+  .table.responsive .row .input-sm { width: 80px !important; }
+  /* 徽章 / 标签不要拉伸成整条 */
+  .table.responsive td > .badge, .table.responsive td > .chip { align-self: flex-start; }
+  .table.responsive td.wide > .select { width: 100% !important; }
+  /* 席位标签可点，放大一点 */
+  button.seat { padding: 4px 9px; min-height: 26px; }
+  /* 列表视图：额度窗口提到前面，请求和消耗并排一行 */
+  .table.responsive.accounts tr { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 0 18px; }
+  .table.responsive.accounts td { grid-column: 1 / -1; }
+  .table.responsive.accounts td:nth-child(1) { order: 1; }
+  .table.responsive.accounts td:nth-child(2) { order: 2; }
+  .table.responsive.accounts td:nth-child(4) { order: 3; }
+  .table.responsive.accounts td:nth-child(3) { order: 4; grid-column: 1; }
+  .table.responsive.accounts td:nth-child(5) { order: 5; grid-column: 2; }
+  .table.responsive.accounts td:nth-child(5) .cost { min-width: 0; }
+  .table.responsive.accounts td:nth-child(5) .cost-row .faint { min-width: 0; }
+
+  /* 结算弹窗里的账号表：去掉区间 / Token 列，区间写在账号下面 */
+  .win-table .c-range, .win-table .c-tok { display: none; }
+  .modal-overlay { padding: 10px; align-items: flex-end; }
+  .modal { max-height: calc(100dvh - 20px - env(safe-area-inset-top)); border-radius: 20px; }
+  .modal-head { padding: 14px 16px; }
+  .modal-body { padding: 14px 16px; }
+  .modal-foot { padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); }
+  .modal-foot .btn { min-height: 42px; flex: 1; justify-content: center; }
+  .menu { max-width: calc(100vw - 20px); }
+  .menu button, .menu a { min-height: 40px; }
+
+  /* 统计看板 */
+  .stats-bar { padding: 12px; }
+  .stats-bar input[type=date] { width: 128px; }
+  .chart { height: 240px; }
+  .chart-lg { height: 300px; }
+}
+/* 很窄的手机（≤ 380px）再收紧一点 */
+@media (max-width: 380px) {
+  .stat { padding: 12px; gap: 8px; }
+  .stat-icon { width: 32px; height: 32px; }
+  .stat-value { font-size: 17px; }
+  .bn-ic { width: 44px; }
+}
+/* 手机横屏：底部导航变矮 */
+@media (max-height: 480px) and (orientation: landscape) and (max-width: 1024px) {
+  .bottom-nav { padding-top: 3px; padding-bottom: calc(3px + env(safe-area-inset-bottom)); }
+  .bn-ic { height: 24px; }
+}
