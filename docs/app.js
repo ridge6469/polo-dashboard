@@ -568,10 +568,11 @@
     'Sonnet': { cls: 'ul-sonnet', label: 'Sonnet' },
   };
   const WIN_ORDER = ['5h', '7d', 'Fable 5', 'Sonnet'];
-  // 标记为 TEAM 标准（普通）席位的账号没有 Fable，不显示 Fable 窗口；标记为高级或未标记时照常显示
+  // 标记为 TEAM 标准（普通）席位的账号没有 Fable，不显示 Fable 窗口；标记为高级或未标记时照常显示。Sonnet 窗口一律不显示。
   const isFable = (k) => /^fable/i.test(k);
+  const HIDDEN_WINDOWS = /^sonnet$/i;
   function quotaKeys(r) {
-    const all = [...WIN_ORDER.filter((k) => r.quota && r.quota[k]), ...Object.keys(r.quota || {}).filter((k) => !WIN_ORDER.includes(k))];
+    const all = [...WIN_ORDER.filter((k) => r.quota && r.quota[k]), ...Object.keys(r.quota || {}).filter((k) => !WIN_ORDER.includes(k))].filter((k) => !HIDDEN_WINDOWS.test(k));
     return r.seat === 'standard' ? all.filter((k) => !isFable(k)) : all;
   }
   // 标准席位却出现了 Fable 用量：可能已经升级，提示管理员改标记
@@ -1005,7 +1006,8 @@
           statCard('今日 Token', compact(todayTok), 'cube', 'cyan', '各账号今日合计'));
       } else {
         let next = null;
-        for (const r of rows) for (const [k, q] of Object.entries(r.quota || {})) {
+        for (const r of rows) for (const k of quotaKeys(r)) {
+          const q = r.quota[k];
           if (q.reset_at && toDate(q.reset_at) > Date.now() && (!next || toDate(q.reset_at) < toDate(next.at))) next = { at: q.reset_at, name: r.display_name, k };
         }
         clear(stats,
