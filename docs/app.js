@@ -926,7 +926,7 @@
     const { main } = appLayout({ active: '#/dashboard', title: '用量看板', desc: admin ? '全部账号的额度、用量与重置时间' : '你可以查看的账号额度、用量与重置时间' });
     const notices = h('div');
     const stats = h('div', { class: 'stats' + (admin ? '' : ' s3') }, skeletonStats(admin ? 8 : 6));
-    const search = leadInput('search', { class: 'input input-sm has-lead', placeholder: admin ? '搜索账号、邮箱、IP、归属（我 / 成员名）' : '搜索账号、邮箱、IP', type: 'search' });
+    const search = leadInput('search', { class: 'input input-sm has-lead', placeholder: admin ? '搜索账号、邮箱、IP、归属' : '搜索账号、邮箱、IP', type: 'search' });
     search.wrap.style.width = '240px';
     let filter = 'all';
     let sortKey = localStorage.getItem('polo_sort') || '7d';
