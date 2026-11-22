@@ -568,6 +568,18 @@
     'Sonnet': { cls: 'ul-sonnet', label: 'Sonnet' },
   };
   const WIN_ORDER = ['5h', '7d', 'Fable 5', 'Sonnet'];
+  // 标记为 TEAM 标准（普通）席位的账号没有 Fable，不显示 Fable 窗口；标记为高级或未标记时照常显示
+  const isFable = (k) => /^fable/i.test(k);
+  function quotaKeys(r) {
+    const all = [...WIN_ORDER.filter((k) => r.quota && r.quota[k]), ...Object.keys(r.quota || {}).filter((k) => !WIN_ORDER.includes(k))];
+    return r.seat === 'standard' ? all.filter((k) => !isFable(k)) : all;
+  }
+  // 标准席位却出现了 Fable 用量：可能已经升级，提示管理员改标记
+  function fableHint(r) {
+    if (r.seat !== 'standard') return null;
+    const f = Object.entries(r.quota || {}).find(([k, q]) => isFable(k) && typeof q.used_pct === 'number' && q.used_pct > 0);
+    return f ? h('span', { class: 'chip chip-warn', title: `标记为标准席位，但后台显示 Fable 已用 ${pct(f[1].used_pct)}，可能已升级为高级席位`, text: 'Fable 有用量' }) : null;
+  }
 
   function resetEl(q, resetText) {
     if (q.reset_at) {
@@ -581,7 +593,7 @@
   function usageBlock(r, withStats = true) {
     const d = r.detail || {};
     const box = h('div', { class: 'usage' });
-    const keys = [...WIN_ORDER.filter((k) => r.quota && r.quota[k]), ...Object.keys(r.quota || {}).filter((k) => !WIN_ORDER.includes(k))];
+    const keys = quotaKeys(r);
     if (!keys.length) return h('span', { class: 'faint', text: '—' });
     for (const k of keys) {
       const q = r.quota[k];
@@ -670,7 +682,7 @@
           r.email ? h('span', { class: 'l-email', title: r.email + '（点击复制）', onclick: () => copy(r.email, '邮箱') }, r.email) : h('span', { class: 'l-email', text: dash(r.display_name) }),
           h('span', { class: 'switch' + (on ? ' on' : ''), title: `后台状态：${r.state || '未知'}（只读）` }, h('i'))),
         h('div', { class: 'l-line', style: { marginTop: '6px' } },
-          seatBadge(r, admin),
+          seatBadge(r, admin), fableHint(r),
           (r.groups || []).map((g) => h('span', { class: 'chip chip-orange', text: g })),
           h('span', { class: 'l-name mono', title: '后台显示名', text: dash(r.display_name) })),
         h('div', { class: 'l-sub' }, meta || '—'),
@@ -715,7 +727,7 @@
     return (dd ? dd + 'd' : '') + (dd || hh ? hh + 'h' : '') + mm + 'm';
   }
   function quotaRows(r) {
-    const keys = [...WIN_ORDER.filter((k) => r.quota && r.quota[k]), ...Object.keys(r.quota || {}).filter((k) => !WIN_ORDER.includes(k))];
+    const keys = quotaKeys(r);
     if (!keys.length) return h('span', { class: 'faint', text: '—' });
     const box = h('div', { class: 'qrows' });
     for (const k of keys) {
@@ -811,7 +823,7 @@
       if (S.redrawAccounts) S.redrawAccounts();
     } catch (e) { toast(errText(e), 'bad'); }
   }
-  const maxPct = (r) => Math.max(-1, ...Object.values(r.quota || {}).map((q) => (typeof q.used_pct === 'number' ? q.used_pct : -1)));
+  const maxPct = (r) => Math.max(-1, ...quotaKeys(r).map((k) => r.quota[k]).map((q) => (typeof q.used_pct === 'number' ? q.used_pct : -1)));
   function ipLine(r, shared) {
     const px = r.detail && r.detail.proxy;
     const lead = h('span', { class: 'ac-ico', title: '出口 IP' }, icon('globe', 'icon icon-sm'));
@@ -835,7 +847,7 @@
     const old = d.usage_updated_at && Date.now() - toDate(d.usage_updated_at).getTime() > 30 * 60000;
     const statRow = (label, x, costKey) => h('tr', {}, h('td', { text: label }), h('td', { text: compact(x && x.requests) }),
       h('td', { text: compact(x && x.tokens) }), h('td', { class: 'text-ok', title: x && x.billed_cost ? `计费价 ${x.billed_cost}` : null, text: dash(x && x[costKey]) }));
-    const tags = [seatBadge(r, isAdmin()), ...planChips(r), ...(r.groups || []).map((g) => h('span', { class: 'chip chip-orange', text: g }))].filter(Boolean);
+    const tags = [seatBadge(r, isAdmin()), fableHint(r), ...planChips(r), ...(r.groups || []).map((g) => h('span', { class: 'chip chip-orange', text: g }))].filter(Boolean);
     return h('div', { class: 'acard' + (off ? ' off' : mp >= 90 ? ' hot' : mp >= 75 ? ' warm' : '') },
       h('div', { class: 'ac-head' },
         h('div', { class: 'ac-id' },
