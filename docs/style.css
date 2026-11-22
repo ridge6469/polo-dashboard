@@ -504,6 +504,49 @@ html.dark .q-note { color: #fdba74; }
 .mini-bar { width: 70px; height: 5px; border-radius: 4px; background: var(--surface-3); overflow: hidden; display: inline-block; vertical-align: middle; margin-left: 6px; }
 .mini-bar i { display: block; height: 100%; background: var(--grad); }
 .grid-2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 18px; }
+
+/* ---------- 结算 ---------- */
+.b-info { background: var(--primary-soft); color: var(--primary-text); }
+.grid-4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0 16px; }
+.period { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.period-range { font-size: 15px; margin: 4px 0; font-variant-numeric: tabular-nums; }
+.period-range b { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.money-strong { font-weight: 750; color: var(--text); }
+td.money-strong, b.money-strong { color: var(--primary-text); }
+.table tfoot td { padding: 11px 14px; font-weight: 700; background: var(--surface-2); border-top: 1px solid var(--border); }
+.table tr.click { cursor: pointer; }
+.table tr.click .chev { transition: transform .2s; }
+.table tr.click.open .chev { transform: rotate(180deg); }
+.table tr.muted-row td { background: color-mix(in srgb, var(--surface-2) 60%, transparent); }
+.table tr.exp-row > td { background: var(--surface-2); padding: 10px 18px 14px; }
+.mini-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.mini-table th { text-align: left; font-weight: 600; color: var(--muted); padding: 4px 8px; border-bottom: 1px solid var(--border); font-size: 12px; }
+.mini-table td { padding: 6px 8px; border-bottom: 1px dashed var(--border); vertical-align: top; }
+.mini-table tr:last-child td { border-bottom: 0; }
+.mini-table .num, .mini-table th:not(:first-child) { text-align: right; }
+.mini-table .email { max-width: 260px; }
+.sum-chips { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 4px; }
+.sum-chips > div { display: flex; flex-direction: column; gap: 2px; padding: 10px 14px; border-radius: 12px; background: var(--surface-2); min-width: 120px; }
+.sum-chips small { font-size: 11.5px; color: var(--muted); }
+.sum-chips b { font-size: 17px; font-variant-numeric: tabular-nums; }
+.settle-card .card-head { border-bottom: 0; padding-bottom: 10px; }
+.settle-card.voided { opacity: .6; }
+.btn-paid { background: var(--ok-bg); color: var(--ok); border-color: transparent; }
+.loading-box { display: flex; align-items: center; gap: 10px; padding: 26px 6px; color: var(--muted); }
+.bars { display: flex; align-items: flex-end; gap: 6px; height: 190px; overflow-x: auto; padding-top: 4px; }
+.bar { flex: 1 0 28px; display: flex; flex-direction: column; align-items: center; gap: 4px; height: 100%; min-width: 28px; }
+.bar-t { flex: 1; width: 100%; display: flex; align-items: flex-end; justify-content: center; }
+.bar-t i { display: block; width: 70%; max-width: 34px; border-radius: 6px 6px 2px 2px; background: var(--grad); opacity: .85; transition: opacity .15s; }
+.bar-t i.live { background: repeating-linear-gradient(135deg, #60a5fa 0 6px, #818cf8 6px 12px); }
+.bar:hover .bar-t i { opacity: 1; }
+.bar-v { font-size: 10.5px; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.bar-l { font-size: 10.5px; color: var(--faint); white-space: nowrap; }
+.table.matrix { font-size: 12px; }
+.table.matrix td, .table.matrix th { padding: 8px 10px; white-space: nowrap; }
+.table.matrix .num { text-align: right; }
+.sticky-col { position: sticky; left: 0; background: var(--glass-strong); z-index: 1; }
+.table.matrix th.sticky-col { z-index: 2; background: var(--surface-2); }
+.table.matrix .email { max-width: 190px; }
 .grid-half { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
 
 /* ---------- 响应式 ---------- */
@@ -513,6 +556,7 @@ html.dark .q-note { color: #fdba74; }
   .shell { margin-left: 0; }
   .menu-btn { display: inline-flex; }
   .grid-2 { grid-template-columns: 1fr; }
+  .grid-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .stats, .stats.s3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (min-width: 1025px) and (max-width: 1280px) {
@@ -528,6 +572,8 @@ html.dark .q-note { color: #fdba74; }
   .user-chip .uname { display: none; }
   .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
   .agrid { grid-template-columns: 1fr; padding: 10px; gap: 10px; }
+  .grid-4 { grid-template-columns: 1fr; }
+  .sum-chips > div { min-width: calc(50% - 5px); }
   .table.accounts td:first-child { width: 100%; max-width: none; padding-left: 0; }
   .l-email { max-width: 240px; }
   .l-act { display: none !important; }
