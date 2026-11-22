@@ -341,7 +341,9 @@ html.dark .seg button.on { background: var(--surface-3); }
 /* ---------- 账号列表（紧凑行） ---------- */
 .table.accounts { min-width: 1080px; }
 .table.accounts td { padding: 12px 12px; }
-.table.accounts td:first-child { padding-left: 18px; width: 300px; }
+.table.accounts td:first-child { padding-left: 18px; width: 270px; max-width: 270px; }
+.l-first { flex-wrap: nowrap; }
+.l-first .l-email { flex: 0 1 auto; min-width: 0; max-width: none; }
 .lrow.off { opacity: .66; }
 .l-line { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
 .tag-claude { font-size: 10.5px; font-weight: 650; padding: 0 6px; border-radius: 5px; border: 1px solid var(--primary-2); color: var(--primary-text); line-height: 17px; flex-shrink: 0; }
@@ -368,7 +370,7 @@ button.seat:hover { filter: brightness(1.08); box-shadow: 0 0 0 2px var(--primar
 .rt-num { min-width: 19px; height: 19px; padding: 0 5px; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 750; background: var(--surface-3); color: var(--muted); font-variant-numeric: tabular-nums; }
 .rt-num.live { background: var(--grad); color: #fff; box-shadow: 0 0 0 3px var(--primary-soft); }
 .hbar-wrap { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
-.hbar { display: flex; gap: 2px; flex: 1; min-width: 150px; max-width: 230px; }
+.hbar { display: flex; gap: 2px; flex: 1; min-width: 140px; max-width: 220px; }
 .hbar i { flex: 1; height: 7px; border-radius: 2px; }
 .h-ok { background: #10b981; } .h-warn { background: #d4a514; } .h-bad { background: #f87171; opacity: .75; } .h-gray { background: var(--surface-3); }
 .h-label { font-size: 12px; font-weight: 650; white-space: nowrap; }
@@ -382,7 +384,7 @@ button.seat:hover { filter: brightness(1.08); box-shadow: 0 0 0 2px var(--primar
 .req-k { color: var(--muted); font-size: 12px; }
 .req .pill + .pill { margin-left: 4px; }
 /* 额度 */
-.qrows { display: grid; grid-template-columns: 44px minmax(90px, 1fr) 42px 64px; gap: 6px 8px; align-items: center; min-width: 270px; }
+.qrows { display: grid; grid-template-columns: 42px minmax(70px, 1fr) 40px 58px; gap: 6px 8px; align-items: center; min-width: 240px; }
 .q-k { font-size: 12px; color: var(--muted); font-weight: 550; white-space: nowrap; }
 .q-track { height: 6px; border-radius: 999px; background: var(--surface-3); overflow: hidden; }
 .q-pct { font-size: 12px; font-weight: 700; text-align: right; font-variant-numeric: tabular-nums; color: var(--text-2); }
@@ -392,10 +394,10 @@ button.seat:hover { filter: brightness(1.08); box-shadow: 0 0 0 2px var(--primar
 html.dark .q-note { color: #fdba74; }
 .q-foot { grid-column: 1 / -1; display: flex; align-items: center; gap: 4px; font-size: 11.5px; color: var(--muted); margin-top: 2px; }
 /* 消耗 */
-.cost { display: grid; gap: 6px; min-width: 190px; }
-.cost-row { display: grid; grid-template-columns: 34px 1fr auto; gap: 10px; align-items: center; font-size: 12px; white-space: nowrap; }
+.cost { display: grid; gap: 6px; min-width: 175px; }
+.cost-row { display: grid; grid-template-columns: 32px 1fr auto; gap: 8px; align-items: center; font-size: 12px; white-space: nowrap; }
 .cost-row .mono:nth-child(2) { text-align: right; color: var(--text-2); font-weight: 600; }
-.cost-row .faint { min-width: 74px; text-align: right; }
+.cost-row .faint { min-width: 66px; text-align: right; }
 .cost-row.strong .q-k, .cost-row.strong .mono:nth-child(2) { color: var(--text); font-weight: 750; }
 .l-act { width: 36px; text-align: right; }
 .icon-btn { border: 0; background: transparent; width: 28px; height: 28px; border-radius: 8px; color: var(--muted); font-size: 16px; cursor: pointer; line-height: 1; }
@@ -526,7 +528,7 @@ html.dark .q-note { color: #fdba74; }
   .user-chip .uname { display: none; }
   .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
   .agrid { grid-template-columns: 1fr; padding: 10px; gap: 10px; }
-  .table.accounts td:first-child { width: 100%; padding-left: 0; }
+  .table.accounts td:first-child { width: 100%; max-width: none; padding-left: 0; }
   .l-email { max-width: 240px; }
   .l-act { display: none !important; }
   .stat { padding: 14px; gap: 10px; }

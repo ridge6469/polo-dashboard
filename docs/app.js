@@ -661,21 +661,21 @@
     const on = !r.state || r.state === '启用';
     const conc = toNum(rt.concurrency !== undefined && rt.concurrency !== null ? rt.concurrency : hl.concurrency) || 0;
     const old = d.usage_updated_at && Date.now() - toDate(d.usage_updated_at).getTime() > 30 * 60000;
-    const meta = [hl.added_at ? `添加 ${fmtShort(hl.added_at)}` : null,
-      lastUsed ? `${lastUsed}使用` : null].filter(Boolean).join(' · ');
+    const meta = [...planText(r), hl.added_at ? `添加 ${fmtShort(hl.added_at)}` : null].filter(Boolean).join(' · ');
     return h('tr', { class: 'lrow' + (on ? '' : ' off') },
       // 账号
       h('td', { 'data-label': '' },
-        h('div', { class: 'l-line' },
+        h('div', { class: 'l-line l-first' },
           h('span', { class: 'tag-claude', text: 'Claude' }),
           r.email ? h('span', { class: 'l-email', title: r.email + '（点击复制）', onclick: () => copy(r.email, '邮箱') }, r.email) : h('span', { class: 'l-email', text: dash(r.display_name) }),
           h('span', { class: 'switch' + (on ? ' on' : ''), title: `后台状态：${r.state || '未知'}（只读）` }, h('i'))),
         h('div', { class: 'l-line', style: { marginTop: '6px' } },
-          seatBadge(r, admin), planChips(r),
+          seatBadge(r, admin),
           (r.groups || []).map((g) => h('span', { class: 'chip chip-orange', text: g })),
           h('span', { class: 'l-name mono', title: '后台显示名', text: dash(r.display_name) })),
         h('div', { class: 'l-sub' }, meta || '—'),
-        d.usage_updated_at ? h('div', { class: 'l-sub' + (old ? ' text-warn' : ''), title: '后台最近一次刷新该账号用量：' + fmtTime(d.usage_updated_at) }, `用量 ${ago(d.usage_updated_at)}更新`) : null),
+        h('div', { class: 'l-sub' }, lastUsed ? h('span', { title: d.last_used_at ? '最近使用：' + fmtTime(d.last_used_at) : null, text: `${lastUsed}使用` }) : '未使用',
+          d.usage_updated_at ? h('span', { class: old ? 'text-warn' : '', title: '后台最近一次刷新该账号用量：' + fmtTime(d.usage_updated_at) }, ` · 用量 ${ago(d.usage_updated_at)}更新`) : null)),
       // 状态 + 实时
       h('td', { 'data-label': '状态 / 实时' },
         h('div', { class: 'l-line' }, statusBadge(r),
@@ -759,7 +759,7 @@
     const tone = px.health === '可用' ? (lat !== null && lat !== undefined && lat >= 500 ? 'p-warn' : 'p-ok') : 'p-bad';
     const others = (shared[ip] || []).filter((n) => n !== (r.display_name || r.email));
     return [h('span', { class: 'pill ' + tone + ' ip-pill', title: `${px.protocol || '代理'}:${dash(px.port)} · ${dash(px.health)}${lat !== null && lat !== undefined ? ' ' + lat + 'ms' : ''}${px.host && px.host !== ip ? '\n主机名：' + px.host : ''}\n点击复制`, onclick: () => copy(ip, ' IP') }, icon('globe', 'icon icon-sm'), h('span', { class: 'mono', text: ip }), lat !== null && lat !== undefined ? h('span', { class: 'xs', style: { opacity: '.75' }, text: lat + 'ms' }) : null),
-      others.length ? h('span', { class: 'chip chip-warn', title: '这些账号使用同一个出口 IP', text: '与 ' + others.join('、') + ' 共用' }) : null];
+      others.length ? h('span', { class: 'chip chip-warn', title: '与 ' + others.join('、') + ' 使用同一个出口 IP', text: '共用 ' + others.join('、') }) : null];
   }
   // ---------- Team 席位（管理员手动标记） ----------
   const isTeam = (r) => (r.plan || []).some((p) => /team/i.test(p));
@@ -778,6 +778,7 @@
   function planChips(r) {
     return (r.plan || []).filter((p) => !/team/i.test(p)).map((p) => h('span', { class: 'chip', text: p }));
   }
+  const planText = (r) => (r.plan || []).filter((p) => !/team/i.test(p));
   function seatMenu(anchor, r) {
     menu(anchor, [
       { label: 'TEAM 高级席位', checked: r.seat === 'premium', onClick: () => setSeat(r, 'premium') },
