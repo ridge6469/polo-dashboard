@@ -610,11 +610,15 @@ tr:hover .nick-btn { opacity: 1; }
 .voided-row td:first-child { opacity: 1; }
 
 /* ---------- 统计看板 ---------- */
-.stats-bar { padding: 12px 16px; margin-bottom: 16px; position: sticky; top: 64px; z-index: 5; }
+.stats-bar { padding: 12px 16px; margin-bottom: 16px; }
+.stats-bar .input, .stats-bar .select { width: auto; }
+.stats-bar input[type=date] { width: 150px; }
 .stats-bar-in { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.stats-bar-in > .row { flex-wrap: nowrap; }
 .seg-wrap { flex-wrap: wrap; }
 .seg-sm button { padding: 3px 9px; font-size: 12px; }
-.stats.kpis { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.stats.kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (min-width: 1800px) { .stats.kpis { grid-template-columns: repeat(6, minmax(0, 1fr)); } }
 .kpi .stat-sub { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; }
 .delta { display: inline-flex; padding: 0 6px; border-radius: 6px; font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .delta.up { color: var(--ok); background: rgba(16, 185, 129, .12); }
@@ -685,7 +689,8 @@ tr:hover .nick-btn { opacity: 1; }
   .stats.kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .agrid { grid-template-columns: 1fr; padding: 10px; gap: 10px; }
   .mgrid { grid-template-columns: 1fr; }
-  .stats-bar { position: static; }
+  .stats-bar-in > .row { flex-wrap: wrap; }
+  .stats-bar input[type=date] { width: 138px; }
   .mc-amts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .chart { height: 260px; }
   .chart-lg { height: 320px; }

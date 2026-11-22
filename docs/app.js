@@ -2287,7 +2287,7 @@
           h('thead', {}, h('tr', {}, COLS.map(([k, l]) => h('th', { class: k === 'spark' ? '' : 'sortable' + (sortKey === k ? ' sorted' : ''), onclick: k === 'spark' ? null : () => { if (sortKey === k) sortDir = -sortDir; else { sortKey = k; sortDir = typeof val(accs[0], k) === 'string' ? 1 : -1; } drawTable(); } }, l, sortKey === k ? (sortDir > 0 ? ' ↑' : ' ↓') : '')))),
           h('tbody', {}, rows.map((a) => { const inf = info[a.key] || {}; return h('tr', {},
             h('td', { 'data-label': '' }, acctLabel(a.key, info, a.name), inf.seat ? h('span', { class: 'chip', style: { marginTop: '3px' }, text: SEAT_CN[inf.seat] + '席位' }) : null),
-            h('td', { 'data-label': '归属', class: 'small' }, [...a.owners].map(ownName).join('、')),
+            h('td', { 'data-label': '归属', class: 'small nowrap' }, [...a.owners].map(ownName).join('、')),
             h('td', { 'data-label': '额度', class: 'num money-strong', title: usd4(a.usd) }, usd(a.usd)),
             h('td', { 'data-label': '占比', class: 'num' }, h('div', { class: 'pct-cell' }, h('span', { text: T.usd ? ((a.usd / T.usd) * 100).toFixed(1) + '%' : '—' }), (() => { const i = h('i'); i.style.width = (T.usd ? (a.usd / T.usd) * 100 : 0) + '%'; return h('div', { class: 'pct-bar' }, i); })())),
             h('td', { 'data-label': '产出', class: 'num' }, cny(a.usd * rate)),
@@ -2346,7 +2346,7 @@
           yAxis: [axisY(t, shortUsd), axisY(t, shortCny, { splitLine: { show: false } })],
           series: [...groups.map((g, i) => ({ name: g.name, type: 'bar', stack: 'u', data: g.vals.map((v) => Math.round(v * 10000) / 10000), barMaxWidth: 34, emphasis: { focus: 'series' },
             itemStyle: { color: PALETTE[i % PALETTE.length], borderRadius: i === groups.length - 1 ? [5, 5, 0, 0] : 0 }, animationDelay: (idx) => idx * 28 + i * 40 })),
-          { name: '我的利润（估）', type: 'line', yAxisIndex: 1, smooth: true, symbol: 'circle', symbolSize: 6, showSymbol: dayList.length <= 31, data: daily.map((D) => r2(D.my)),
+          { name: '我的利润（估）', type: 'line', yAxisIndex: 1, smooth: dayList.length > 5 ? 0.35 : false, symbol: 'circle', symbolSize: 6, showSymbol: dayList.length <= 31, data: daily.map((D) => r2(D.my)),
             lineStyle: { width: 2.5, color: '#10b981' }, itemStyle: { color: '#10b981' }, areaStyle: { color: grad(E, 'rgba(16,185,129,.22)', 'rgba(16,185,129,0)') }, z: 5, animationDelay: 300 }],
         }));
       }
@@ -2389,7 +2389,7 @@
       } else ch4.setOption({ title: { text: '这段时间还没有按小时的数据（后台正在补算）', left: 'center', top: 'middle', textStyle: { color: t.muted, fontSize: 12, fontWeight: 400 } } });
       // ---- 模型额度
       const ch5 = mkChart(model.el);
-      const mk = (name, vals, c) => ({ name, type: 'line', stack: 'm', smooth: true, symbol: 'none', data: vals.map((v) => Math.round(v * 100) / 100), lineStyle: { width: 1.5, color: c }, itemStyle: { color: c }, areaStyle: { color: grad(E, c + 'cc', c + '22') }, emphasis: { focus: 'series' } });
+      const mk = (name, vals, c) => ({ name, type: 'line', stack: 'm', smooth: dayList.length > 5 ? 0.35 : false, symbol: 'none', data: vals.map((v) => Math.round(v * 100) / 100), lineStyle: { width: 1.5, color: c }, itemStyle: { color: c }, areaStyle: { color: grad(E, c + 'cc', c + '22') }, emphasis: { focus: 'series' } });
       ch5.setOption(Object.assign(baseOpt(t), { tooltip: Object.assign(baseOpt(t).tooltip, { axisPointer: { type: 'line', lineStyle: { color: t.border } }, formatter: axisTip({ _: usd }) }),
         xAxis: axisX(t, single ? [dayList[0].slice(5)] : dayList.map((d) => d.slice(5)), { boundaryGap: false }), yAxis: axisY(t, shortUsd),
         series: [mk('Opus', daily.map((D) => D.opus), PALETTE[1]), mk('Fable', daily.map((D) => D.fable), PALETTE[2]), mk('其他模型', daily.map((D) => Math.max(0, D.usd - D.opus - D.fable)), PALETTE[13])] }));
@@ -2398,7 +2398,7 @@
       ch6.setOption(Object.assign(baseOpt(t), { tooltip: Object.assign(baseOpt(t).tooltip, { formatter: axisTip({ _: (v) => compact(Math.round(v)) }) }),
         xAxis: axisX(t, dayList.map((d) => d.slice(5))), yAxis: [axisY(t, (v) => compact(v)), axisY(t, (v) => compact(v), { splitLine: { show: false } })],
         series: [{ name: '请求', type: 'bar', data: daily.map((D) => D.req), barMaxWidth: 22, itemStyle: { color: grad(E, '#38bdf8', '#3b82f6'), borderRadius: [5, 5, 0, 0] }, animationDelay: (i) => i * 25 },
-          { name: 'Token', type: 'line', yAxisIndex: 1, smooth: true, symbol: 'none', data: daily.map((D) => D.tok), lineStyle: { width: 2.5, color: PALETTE[6] }, itemStyle: { color: PALETTE[6] } }] }));
+          { name: 'Token', type: 'line', yAxisIndex: 1, smooth: dayList.length > 5 ? 0.35 : false, symbol: 'none', data: daily.map((D) => D.tok), lineStyle: { width: 2.5, color: PALETTE[6] }, itemStyle: { color: PALETTE[6] } }] }));
     }
     load();
   }
