@@ -114,6 +114,8 @@
   }
   const money = (n) => (n === null ? '—' : '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
   const pct = (p) => (Number.isInteger(p) ? p : Number(p).toFixed(1)) + '%';
+  // 账号识别键：邮箱（小写）；没有邮箱的账号为 name:显示名
+  const keyText = (k) => (typeof k === 'string' && k.startsWith('name:') ? k.slice(5) + '（无邮箱）' : String(k));
   const toDate = (v) => (typeof v === 'number' ? new Date(v * 1000) : new Date(v));
   function ago(v) {
     if (v === null || v === undefined || v === '') return null;
@@ -623,16 +625,41 @@
     for (const [k, v, cls] of pairs) append(dl, h('dt', { text: k }), h('dd', { class: cls || null, text: dash(v) }));
     return dl;
   }
-  function accountRow(r) {
+  function ipOf(r) { const px = r.detail && r.detail.proxy; return px && px.mode === 'proxy' ? (px.ip || px.host || null) : null; }
+  function sharedIps(rows) {
+    const m = {};
+    for (const r of rows) { const ip = ipOf(r); if (ip) (m[ip] = m[ip] || []).push(r.display_name || r.email); }
+    return m;
+  }
+  function ipCell(r, shared) {
+    const px = r.detail && r.detail.proxy;
+    if (!px) return h('span', { class: 'faint', text: '—' });
+    if (px.mode === 'direct') return h('span', { class: 'badge b-gray plain', text: '直连（不走代理）' });
+    if (px.mode !== 'proxy') return h('span', { class: 'faint', text: '未识别' });
+    const ip = px.ip || px.host;
+    const lat = px.latency_ms;
+    const tone = px.health === '可用' ? (lat !== null && lat !== undefined && lat >= 500 ? 'b-warn' : 'b-ok') : 'b-bad';
+    const others = (shared[ip] || []).filter((n) => n !== (r.display_name || r.email));
+    return h('div', {},
+      h('span', { class: 'mono ip', title: '点击复制' + (px.host && px.host !== ip ? `\n主机名：${px.host}` : ''), onclick: () => copy(ip, ' IP') }, ip),
+      h('div', { class: 'cell-sub mono', text: `${px.protocol || '代理'} · 端口 ${dash(px.port)}` }),
+      h('div', { class: 'chips', style: { marginTop: '5px' } },
+        px.health ? h('span', { class: 'badge ' + tone, text: px.health + (lat !== null && lat !== undefined ? ` ${lat}ms` : '') }) : null,
+        px.host && px.host !== ip ? h('span', { class: 'chip', title: px.host, text: '域名解析' }) : null,
+        others.length ? h('span', { class: 'chip chip-warn', title: '这些账号使用同一个出口 IP', text: '与 ' + others.join('、') + ' 共用' }) : null));
+  }
+  function accountRow(r, shared) {
     const d = r.detail || {}, hl = r.health || {}, t = d.today || {}, rt = d.realtime || {};
     const lastUsed = ago(d.last_used_at) || hl.last_used_display;
     return h('tr', {},
       h('td', { 'data-label': '' },
         h('div', { class: 'cell-title', text: dash(r.display_name) }),
+        r.email ? h('div', { class: 'email mono', title: r.email + '（点击复制）', onclick: () => copy(r.email, '邮箱') }, r.email) : null,
         h('div', { class: 'chips', style: { marginTop: '5px' } },
           (r.groups || []).map((g) => h('span', { class: 'chip chip-blue', text: g })),
           (r.plan || []).map((p) => h('span', { class: 'chip', text: p })))),
       h('td', { 'data-label': '状态' }, statusCell(r)),
+      h('td', { 'data-label': '出口 IP' }, ipCell(r, shared || {})),
       h('td', { 'data-label': '额度' }, usageBlock(r)),
       h('td', { 'data-label': '今日' }, kv([['请求', compact(t.requests)], ['Token', compact(t.tokens)], ['费用', t.cost, 'text-ok']])),
       h('td', { 'data-label': '实时' }, h('div', { class: 'chips', style: { maxWidth: '150px' } },
@@ -642,7 +669,7 @@
       h('td', { 'data-label': '最近使用', class: 'nowrap' }, h('span', { title: d.last_used_at ? fmtTime(d.last_used_at) : '', text: dash(lastUsed) })));
   }
   const maxPct = (r) => Math.max(-1, ...Object.values(r.quota || {}).map((q) => (typeof q.used_pct === 'number' ? q.used_pct : -1)));
-  const isAbnormal = (r) => (r.state && r.state !== '启用') || (r.detail && ((r.detail.status && r.detail.status !== '正常') || r.detail.cooldown_text));
+  const isAbnormal = (r) => (r.state && r.state !== '启用') || (r.detail && ((r.detail.status && r.detail.status !== '正常') || r.detail.cooldown_text || (r.detail.proxy && r.detail.proxy.mode === 'proxy' && r.detail.proxy.health && r.detail.proxy.health !== '可用')));
   const SORTS = {
     '7d': { label: '7d 用量从高到低', fn: (r) => (r.quota && r.quota['7d'] && typeof r.quota['7d'].used_pct === 'number' ? r.quota['7d'].used_pct : -1), desc: true },
     '5h': { label: '5h 用量从高到低', fn: (r) => (r.quota && r.quota['5h'] && typeof r.quota['5h'].used_pct === 'number' ? r.quota['5h'].used_pct : -1), desc: true },
@@ -650,6 +677,7 @@
     cost: { label: '今日费用从高到低', fn: (r) => toNum(r.detail && r.detail.today && r.detail.today.cost) || 0, desc: true },
     recent: { label: '最近使用', fn: (r) => (r.detail && r.detail.last_used_at ? toDate(r.detail.last_used_at).getTime() : 0), desc: true },
     name: { label: '名称', fn: (r) => r.display_name || '', desc: false },
+    ip: { label: '出口 IP', fn: (r) => (ipOf(r) || '~').split('.').map((x) => x.padStart(3, '0')).join('.'), desc: false },
   };
 
   function autoRefreshControl(onRefresh) {
@@ -683,7 +711,7 @@
     const { main } = appLayout({ active: '#/dashboard', title: '用量看板', desc: admin ? '全部账号的额度、用量与重置时间' : '你可以查看的账号额度、用量与重置时间' });
     const notices = h('div');
     const stats = h('div', { class: 'stats' }, skeletonStats(admin ? 8 : 6));
-    const search = leadInput('search', { class: 'input input-sm has-lead', placeholder: '搜索账号、分组、套餐', type: 'search' });
+    const search = leadInput('search', { class: 'input input-sm has-lead', placeholder: '搜索账号、邮箱、IP、分组', type: 'search' });
     search.wrap.style.width = '240px';
     let filter = 'all';
     let sortKey = localStorage.getItem('polo_sort') || '7d';
@@ -700,9 +728,9 @@
     const auto = autoRefreshControl(() => load());
     refreshBtn.addEventListener('click', () => { auto.reset(); load(); });
     const countText = h('span', { class: 'muted small' });
-    const tbody = h('tbody', {}, Array.from({ length: 4 }, () => h('tr', {}, Array.from({ length: 7 }, () => h('td', {}, h('div', { class: 'skeleton sk-line' }))))));
+    const tbody = h('tbody', {}, Array.from({ length: 4 }, () => h('tr', {}, Array.from({ length: 8 }, () => h('td', {}, h('div', { class: 'skeleton sk-line' }))))));
     const table = h('table', { class: 'table responsive accounts' },
-      h('thead', {}, h('tr', {}, ['账号', '状态', '额度窗口', '今日', '实时', '24 小时', '最近使用'].map((t) => h('th', { text: t })))), tbody);
+      h('thead', {}, h('tr', {}, ['账号 / 邮箱', '状态', '出口 IP', '额度窗口', '今日', '实时', '24 小时', '最近使用'].map((t) => h('th', { text: t })))), tbody);
     const ops = h('div', { class: 'ops' });
     append(main, notices, stats,
       h('div', { class: 'card' },
@@ -719,7 +747,7 @@
       if (!d) return;
       const rows = (d.accounts && d.accounts.data && d.accounts.data.rows) || [];
       const q = search.input.value.trim().toLowerCase();
-      let list = rows.filter((r) => !q || [r.display_name, ...(r.groups || []), ...(r.plan || [])].join(' ').toLowerCase().includes(q));
+      let list = rows.filter((r) => !q || [r.display_name, r.email, ipOf(r), ...(r.groups || []), ...(r.plan || [])].join(' ').toLowerCase().includes(q));
       if (filter === 'high') list = list.filter((r) => maxPct(r) >= 75);
       if (filter === 'abnormal') list = list.filter(isAbnormal);
       const s = SORTS[sortKey];
@@ -729,8 +757,8 @@
         return s.desc ? -c : c;
       });
       countText.textContent = `显示 ${list.length} / ${rows.length} 个`;
-      if (!list.length) clear(tbody, h('tr', {}, h('td', { colspan: '7' }, emptyState(rows.length ? '没有符合条件的账号' : (admin ? '暂无账号数据' : '管理员还没有给你分配账号')))));
-      else clear(tbody, list.map(accountRow));
+      if (!list.length) clear(tbody, h('tr', {}, h('td', { colspan: '8' }, emptyState(rows.length ? '没有符合条件的账号' : (admin ? '暂无账号数据' : '管理员还没有给你分配账号')))));
+      else { const shared = sharedIps(rows); clear(tbody, list.map((r) => accountRow(r, shared))); }
       paintUpdated();
     }
     function paintUpdated() {
@@ -780,7 +808,11 @@
       else {
         if (a.stale) list.push(['n-warn', 'warning', '账号数据已超过 20 分钟没有成功更新，显示的可能不是最新结果。']);
         if (admin && a.data && a.data.complete === false) list.push(['n-warn', 'warning', '后台账号列表没有读全，显示的不是全部账号。']);
-        if (!admin && a.data && a.data.missing && a.data.missing.length) list.push(['n-info', 'info', `以下分配给你的账号在当前数据中没有找到：${a.data.missing.join('、')}。`]);
+        if (!admin && a.data && a.data.missing && a.data.missing.length) list.push(['n-info', 'info', `以下分配给你的账号在当前数据中没有找到：${a.data.missing.map(keyText).join('、')}。`]);
+        if (admin && a.data && a.data.rows) {
+          const dup = Object.entries(sharedIps(a.data.rows)).filter(([, v]) => v.length > 1);
+          if (dup.length) list.push(['n-warn', 'warning', '以下账号共用同一个出口 IP：' + dup.map(([ip, v]) => `${v.join('、')}（${ip}）`).join('；') + '。']);
+        }
       }
       const cn = d.summary && d.summary.data && d.summary.data.source_cache_notice;
       if (admin && cn) list.push(['n-info', 'info', '后台提示：' + cn]);
@@ -802,10 +834,6 @@
           ['已加载请求', u.row_count !== null && u.row_count !== undefined ? `${u.row_count} 条${u.more_available ? '（未全部加载）' : ''}` : null],
           ['状态分布', h('div', { class: 'chips' }, Object.entries(u.visible_status_counts || {}).map(([k, v]) => h('span', { class: 'chip ' + (k === '200' ? 'chip-blue' : ''), text: `${k} × ${v}` })))],
         ]),
-        opsCard('出站代理', 'globe', d.proxies, (p) => [
-          ['数量', p.coverage || (p.row_count !== null ? `${p.row_count} 个` : null)],
-          ['健康', h('div', { class: 'chips' }, Object.entries(p.health_counts || {}).map(([k, v]) => h('span', { class: 'badge ' + (k === '可用' ? 'b-ok' : 'b-warn'), text: `${k} ${v}` })))],
-        ]),
         opsCard('已归档账号', 'archive', d.archived, (x) => [
           ['当前页', x.row_count !== null ? `${x.row_count} 个${x.has_next ? '（还有下一页）' : ''}` : null],
           ['最早归档', x.archived_time_range && x.archived_time_range.first],
@@ -814,7 +842,33 @@
         opsCard('用量统计', 'chart', d.vendor, (v) => [
           ['状态', stateText[v.query_state] || v.query_state],
           ['请求数', v.metrics && v.metrics['请求数']], ['Tokens', v.metrics && v.metrics.Tokens], ['成本', v.metrics && v.metrics['成本']],
-        ]));
+        ]),
+        proxyCard(d.proxies, d.accounts));
+    }
+    function proxyCard(res, accRes) {
+      const data = res && res.data;
+      const names = {};
+      for (const r of (accRes && accRes.data && accRes.data.rows) || []) if (r.account_key) names[r.account_key] = r.display_name || r.email;
+      const list = (data && data.proxies) || [];
+      const body = !data ? h('p', { class: 'muted', style: { margin: 0 }, text: '暂无数据' })
+        : !list.length ? h('div', { class: 'chips' }, Object.entries(data.health_counts || {}).map(([k, v]) => h('span', { class: 'badge ' + (k === '可用' ? 'b-ok' : 'b-warn'), text: `${k} ${v}` })))
+          : h('div', { class: 'table-wrap' }, h('table', { class: 'table' },
+            h('thead', {}, h('tr', {}, ['出口 IP', '协议 / 端口', '健康', '成功 / 失败', '使用的账号', '最近使用'].map((t) => h('th', { text: t })))),
+            h('tbody', {}, [...list].sort((a, b) => (b.accounts || []).length - (a.accounts || []).length).map((p) => {
+              const ip = p.ip || p.host;
+              const tone = p.health === '可用' ? (p.latency_ms >= 500 ? 'b-warn' : 'b-ok') : 'b-bad';
+              const acc = p.accounts || [];
+              return h('tr', {},
+                h('td', {}, h('span', { class: 'mono ip', title: (p.host && p.host !== ip ? `主机名：${p.host}\n` : '') + '点击复制', onclick: () => copy(ip, ' IP') }, dash(ip))),
+                h('td', { class: 'mono small' }, `${dash(p.protocol)} · ${dash(p.port)}`),
+                h('td', {}, h('span', { class: 'badge ' + tone, text: dash(p.health) + (p.latency_ms !== null && p.latency_ms !== undefined ? ` ${p.latency_ms}ms` : '') })),
+                h('td', { class: 'num small' }, `${dash(p.success)} / ${dash(p.fail)}`),
+                h('td', {}, acc.length ? h('div', { class: 'chips' }, acc.map((k) => h('span', { class: 'chip' + (acc.length > 1 ? ' chip-warn' : ' chip-blue'), title: keyText(k), text: names[k] || keyText(k) }))) : h('span', { class: 'faint small', text: '未绑定' })),
+                h('td', { class: 'small nowrap' }, dash(p.last_used)));
+            }))));
+      return h('div', { class: 'card', style: { gridColumn: '1 / -1' } },
+        h('div', { class: 'card-head' }, h('h3', { class: 'card-title' }, icon('globe'), '出站代理', data && data.coverage ? h('span', { class: 'faint xs', style: { fontWeight: 400 }, text: data.coverage }) : null), res && res.sampled_at ? h('span', { class: 'faint xs', text: ago(res.sampled_at) }) : null),
+        h('div', { class: 'card-body', style: { padding: list.length ? '0' : null } }, body));
     }
 
     let loading = false;
@@ -830,7 +884,7 @@
           const e = settled[0].reason;
           if (e && (e.status === 401 || e.code === 'password_change_required')) return;
           toast(errText(e), 'bad');
-          if (!S.dash) clear(tbody, h('tr', {}, h('td', { colspan: '7' }, emptyState(errText(e), 'warning'))));
+          if (!S.dash) clear(tbody, h('tr', {}, h('td', { colspan: '8' }, emptyState(errText(e), 'warning'))));
           return;
         }
         S.dash = Object.fromEntries(keys.map((k, i) => [k, settled[i].status === 'fulfilled' ? settled[i].value : null]));
@@ -851,24 +905,35 @@
   async function accountOptions() {
     if (S.accountsCache && Date.now() - S.accountsAt < 60000) return S.accountsCache;
     const r = await api('GET', '/v1/accounts');
-    S.accountsCache = ((r.data && r.data.rows) || []).map((x) => ({ name: x.display_name, p7: x.quota && x.quota['7d'] ? x.quota['7d'].used_pct : null })).filter((x) => x.name);
+    S.accountsCache = ((r.data && r.data.rows) || []).map((x) => ({
+      key: x.account_key || (x.email ? x.email.toLowerCase() : (x.display_name ? 'name:' + x.display_name : null)),
+      name: x.display_name, email: x.email || null, ip: ipOf(x),
+      p7: x.quota && x.quota['7d'] ? x.quota['7d'].used_pct : null,
+    })).filter((x) => x.key);
     S.accountsAt = Date.now();
     return S.accountsCache;
   }
+  function accountChip(k) {
+    const o = (S.accountsCache || []).find((a) => a.key === k);
+    if (!o) return h('span', { class: 'chip', title: '不在当前数据中', text: keyText(k) });
+    return h('span', { class: 'chip', title: o.email || keyText(k) }, h('b', { text: o.name || '' }), o.email ? h('span', { class: 'mono', style: { marginLeft: '4px' }, text: o.email }) : null);
+  }
   function accountPicker(all, selected) {
     const sel = new Set(selected || []);
-    const names = [...all.map((a) => a.name), ...[...sel].filter((n) => !all.some((a) => a.name === n))];
-    const info = Object.fromEntries(all.map((a) => [a.name, a]));
-    const q = leadInput('search', { class: 'input input-sm has-lead', placeholder: '筛选账号', type: 'search' });
+    const keys = [...all.map((a) => a.key), ...[...sel].filter((k) => !all.some((a) => a.key === k))];
+    const info = Object.fromEntries(all.map((a) => [a.key, a]));
+    const q = leadInput('search', { class: 'input input-sm has-lead', placeholder: '按名称、邮箱或 IP 筛选', type: 'search' });
     const grid = h('div', { class: 'pick-grid' });
     const count = h('span', { class: 'muted small' });
     function draw() {
       const f = q.input.value.trim().toLowerCase();
-      clear(grid, names.filter((n) => !f || n.toLowerCase().includes(f)).map((n) => {
-        const cb = h('input', { type: 'checkbox', checked: sel.has(n) });
-        const lab = h('label', { class: 'pick' + (sel.has(n) ? ' on' : '') }, cb, h('span', { text: n }),
-          h('small', { text: info[n] ? (typeof info[n].p7 === 'number' ? '7d ' + pct(info[n].p7) : '') : '不在当前数据' }));
-        cb.addEventListener('change', () => { if (cb.checked) sel.add(n); else sel.delete(n); lab.classList.toggle('on', cb.checked); paintCount(); });
+      clear(grid, keys.filter((k) => !f || [k, info[k] && info[k].name, info[k] && info[k].ip].join(' ').toLowerCase().includes(f)).map((k) => {
+        const o = info[k];
+        const cb = h('input', { type: 'checkbox', checked: sel.has(k) });
+        const lab = h('label', { class: 'pick' + (sel.has(k) ? ' on' : '') }, cb,
+          h('span', { class: 'pick-main' }, h('b', { text: o ? (o.name || '—') : keyText(k) }), h('span', { class: 'pick-email mono', text: o ? (o.email || '无邮箱') : '不在当前数据' })),
+          h('small', { text: o && typeof o.p7 === 'number' ? '7d ' + pct(o.p7) : '' }));
+        cb.addEventListener('change', () => { if (cb.checked) sel.add(k); else sel.delete(k); lab.classList.toggle('on', cb.checked); paintCount(); });
         return lab;
       }));
       if (!grid.children.length) grid.append(h('div', { class: 'muted small', text: '没有匹配的账号' }));
@@ -879,11 +944,11 @@
     draw();
     const el = h('div', {},
       h('div', { class: 'row wrap', style: { marginBottom: '10px' } }, h('div', { class: 'grow', style: { minWidth: '160px' } }, q.wrap),
-        h('button', { class: 'btn btn-secondary btn-sm', type: 'button', onclick: () => { names.forEach((n) => sel.add(n)); draw(); } }, '全选'),
+        h('button', { class: 'btn btn-secondary btn-sm', type: 'button', onclick: () => { keys.forEach((k) => sel.add(k)); draw(); } }, '全选'),
         h('button', { class: 'btn btn-secondary btn-sm', type: 'button', onclick: () => { sel.clear(); draw(); } }, '清空'), count),
       grid,
-      h('p', { class: 'hint', style: { marginBottom: 0 }, text: '按账号显示名匹配；后台改名后需要重新勾选。' }));
-    return { el, get: () => names.filter((n) => sel.has(n)) };
+      h('p', { class: 'hint', style: { marginBottom: 0 }, text: '按邮箱识别账号：后台改名不影响已分配的账号；邮箱变了才需要重新勾选。' }));
+    return { el, get: () => keys.filter((k) => sel.has(k)) };
   }
 
   // ============================================================
@@ -965,7 +1030,7 @@
         const self = u.username === S.user.username;
         const [bc, bt] = STATUS[u.status] || ['b-gray', u.status];
         const acc = u.role === 'admin' ? h('span', { class: 'chip chip-blue', text: '全部账号' })
-          : u.accounts.length ? h('div', { class: 'chips' }, u.accounts.slice(0, 4).map((a) => h('span', { class: 'chip', text: a })), u.accounts.length > 4 ? h('span', { class: 'chip', text: `+${u.accounts.length - 4}` }) : null)
+          : u.accounts.length ? h('div', { class: 'chips' }, u.accounts.slice(0, 3).map(accountChip), u.accounts.length > 3 ? h('span', { class: 'chip', text: `+${u.accounts.length - 3}` }) : null)
             : h('span', { class: 'faint small', text: '未分配' });
         const more = h('button', { class: 'btn btn-ghost btn-icon btn-sm', type: 'button', 'aria-label': '更多操作' }, icon('more', 'icon icon-sm'));
         more.addEventListener('click', () => moreMenu(more, u, self));
@@ -993,6 +1058,7 @@
     async function load() {
       try {
         const r = await api('GET', '/admin/users');
+        await accountOptions().catch(() => null);
         users = r.users;
         S.pending = users.filter((u) => u.status === 'pending').length; S.pendingAt = Date.now();
         const badge = document.querySelector('.side-link .count');
@@ -1075,7 +1141,7 @@
           h('td', { 'data-label': '备注' }, i.note || h('span', { class: 'faint', text: '—' })),
           h('td', { 'data-label': '使用次数', class: 'nowrap' }, `${i.uses} / ${i.max_uses}`, bar),
           h('td', { 'data-label': '注册后' }, i.requires_approval ? h('span', { class: 'badge b-warn plain', text: '需审批' }) : h('span', { class: 'badge b-ok plain', text: '直接可用' })),
-          h('td', { 'data-label': '默认账号' }, i.accounts.length ? h('div', { class: 'chips' }, i.accounts.slice(0, 3).map((a) => h('span', { class: 'chip', text: a })), i.accounts.length > 3 ? h('span', { class: 'chip', text: `+${i.accounts.length - 3}` }) : null) : h('span', { class: 'faint small', text: '无' })),
+          h('td', { 'data-label': '默认账号' }, i.accounts.length ? h('div', { class: 'chips' }, i.accounts.slice(0, 3).map(accountChip), i.accounts.length > 3 ? h('span', { class: 'chip', text: `+${i.accounts.length - 3}` }) : null) : h('span', { class: 'faint small', text: '无' })),
           h('td', { 'data-label': '有效期', class: 'nowrap' }, i.expires_at ? h('span', { title: fmtTime(i.expires_at), text: until(i.expires_at) ? until(i.expires_at) + '后过期' : '已过期' }) : '永久'),
           h('td', { 'data-label': '创建', class: 'nowrap' }, h('div', {}, dash(i.created_by)), h('div', { class: 'cell-sub', text: fmtTime(i.created_at) })),
           h('td', { 'data-label': '状态' }, h('div', { class: 'row' }, h('span', { class: 'badge ' + bc, text: bt }),
@@ -1089,7 +1155,7 @@
       }));
     }
     async function load() {
-      try { invites = (await api('GET', '/admin/invites')).invites; draw(); }
+      try { invites = (await api('GET', '/admin/invites')).invites; await accountOptions().catch(() => null); draw(); }
       catch (e) { clear(tbody, h('tr', {}, h('td', { colspan: '8' }, emptyState(errText(e), 'warning')))); }
     }
     load();
