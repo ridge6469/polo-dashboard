@@ -570,6 +570,11 @@
 
   // 说明文字：电脑上默认展开，手机上默认收起（点标题展开）
   const isPhone = () => window.matchMedia('(max-width: 760px)').matches;
+  // 用户正在滑动 / 触摸时，推迟自动刷新和整块重绘，避免滑到一半页面重排、卡一下
+  S.lastTouch = 0;
+  for (const ev of ['scroll', 'touchstart', 'touchmove', 'wheel']) window.addEventListener(ev, () => { S.lastTouch = Date.now(); }, { passive: true, capture: true });
+  const busyScrolling = () => Date.now() - S.lastTouch < 1500;
+  function whenIdle(fn, tries = 0) { if (!busyScrolling() || tries > 20) return fn(); setTimeout(() => whenIdle(fn, tries + 1), 500); }
   function howTo(title, ...content) {
     return h('details', { class: 'howto', open: !isPhone() }, h('summary', {}, h('b', { text: title }), h('span', { class: 'howto-tip', text: '点开看说明' })), ...content);
   }
@@ -935,7 +940,7 @@
     S.timers.push(setInterval(() => {
       if (!sec || document.hidden) return;
       left -= 1;
-      if (left <= 0) { left = sec; onRefresh(); }
+      if (left <= 0) { if (busyScrolling()) left = 1; else { left = sec; onRefresh(); } }
       paint();
     }, 1000));
     paint();
@@ -1171,13 +1176,13 @@
           return;
         }
         S.dash = Object.fromEntries(keys.map((k, i) => [k, settled[i].status === 'fulfilled' ? settled[i].value : null]));
-        drawNotices(); drawStats(); drawTable(); drawOps();
+        whenIdle(() => { if (!listBox.isConnected) return; drawNotices(); drawStats(); drawTable(); drawOps(); });
       } finally {
         loading = false;
         refreshBtn.disabled = false; clear(refreshBtn, icon('refresh', 'icon icon-sm'), '刷新');
       }
     }
-    S.timers.push(setInterval(() => { if (!document.hidden && S.dash) { drawTable(); if (!admin) drawStats(); } }, 30000));
+    S.timers.push(setInterval(() => { if (!document.hidden && S.dash && !busyScrolling()) { drawTable(); if (!admin) drawStats(); } }, 30000));
     if (S.dash) { drawNotices(); drawStats(); drawTable(); drawOps(); }
     load();
   }
@@ -2788,7 +2793,8 @@
     }
     load();
   }
-  function mkChart(el) { const c = window.echarts.init(el, null, { renderer: 'canvas' }); S.charts.push(c); return c; }
+  // 手机上图表最多按 2 倍像素画：3.5 倍屏下画布太大，占显存、拖慢滚动
+  function mkChart(el) { const c = window.echarts.init(el, null, { renderer: 'canvas', devicePixelRatio: Math.min(window.devicePixelRatio || 1, isPhone() ? 2 : 3) }); S.charts.push(c); return c; }
   function disposeCharts() { (S.charts || []).forEach((c) => { try { c.dispose(); } catch { /* ignore */ } }); S.charts = []; }
   window.addEventListener('resize', () => { clearTimeout(S.resizeT); S.resizeT = setTimeout(() => (S.charts || []).forEach((c) => c.resize()), 120); });
   new MutationObserver(() => { if (S.onTheme) setTimeout(() => S.onTheme && S.onTheme(), 30); }).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });

@@ -868,3 +868,30 @@ tr:hover .nick-btn { opacity: 1; }
   .bottom-nav { padding-top: 3px; padding-bottom: calc(3px + env(safe-area-inset-bottom)); }
   .bn-ic { height: 24px; }
 }
+/* ---------- 手机 / 触屏：滚动性能 ----------
+   毛玻璃（backdrop-filter）每滚一帧都要把底下内容重新模糊一次，手机 GPU 跟不上，
+   会出现“往下滑时下面内容迟迟刷不出来”。手机和触屏设备上改成接近不透明的纯色背景，
+   阴影收小，去掉全屏网格遮罩和卡片入场动画。电脑上不受影响。 */
+@media (max-width: 760px), (hover: none) and (pointer: coarse) {
+  :root {
+    --glass: rgba(255, 255, 255, .93);
+    --glass-strong: rgba(255, 255, 255, .98);
+    --shadow: 0 1px 2px rgba(15, 23, 42, .05), 0 3px 10px rgba(15, 23, 42, .05);
+    --shadow-lg: 0 10px 28px rgba(15, 23, 42, .16);
+    --shadow-glow: 0 3px 10px rgba(37, 99, 235, .26);
+  }
+  html.dark {
+    --glass: rgba(15, 23, 42, .92);
+    --glass-strong: rgba(15, 23, 42, .97);
+    --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 3px 10px rgba(0, 0, 0, .25);
+    --shadow-lg: 0 10px 28px rgba(0, 0, 0, .45);
+  }
+  .glass, .card, .topbar, .bottom-nav, .sidebar, .modal, .menu, .toast, .modal-overlay, .backdrop {
+    backdrop-filter: none !important; -webkit-backdrop-filter: none !important;
+  }
+  .modal-overlay { background: rgba(2, 6, 23, .58); }
+  .backdrop { background: rgba(2, 6, 23, .5); }
+  .bg::after { display: none; }
+  .card, .notice, .mcard, .rise, .acard, .sbar i { animation: none !important; }
+  .acard:hover { transform: none; }
+}
