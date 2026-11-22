@@ -386,7 +386,7 @@ html.dark .seg button.on { background: var(--surface-3); }
 .ac-sec { border-top: 1px dashed var(--border); padding-top: 10px; }
 .acard .usage { min-width: 0; gap: 7px; }
 .acard .u-track { flex: 1; width: auto; min-width: 50px; }
-.acard .u-reset { min-width: 96px; justify-content: flex-end; }
+.acard .u-reset { min-width: 104px; justify-content: flex-end; }
 .mini { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
 .mini th { font-weight: 550; color: var(--faint); text-align: right; padding: 0 0 4px; font-size: 11px; }
 .mini td { text-align: right; padding: 2px 0; color: var(--text-2); font-weight: 600; }

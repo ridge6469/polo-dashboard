@@ -597,7 +597,7 @@
       if (typeof q.used_pct === 'number') {
         const p = q.used_pct, lv = p >= 90 ? 'bad' : p >= 75 ? 'warn' : 'ok';
         const fill = h('div', { class: 'u-fill uf-' + lv }); fill.style.width = Math.min(100, Math.max(0, p)) + '%';
-        append(row, h('div', { class: 'u-track' }, fill), h('span', { class: 'u-pct ' + (lv === 'ok' ? '' : lv), text: pct(p) }), resetEl(q, d.windows && d.windows[k] && d.windows[k].reset_text));
+        append(row, h('div', { class: 'u-track' }, fill), h('span', { class: 'u-pct ' + (lv === 'ok' ? '' : lv), text: pct(p) }), resetEl(q, d.windows && d.windows[k] && d.windows[k].reset_text) || h('span', { class: 'u-reset' }));
       } else if (q.status) {
         row.append(h('span', { class: 'badge b-warn plain', text: q.status }));
       } else row.append(h('span', { class: 'faint small', text: '未读取到' }));
