@@ -723,7 +723,7 @@ tr:hover .nick-btn { opacity: 1; }
 .reach-t { font-size: 24px; font-weight: 750; letter-spacing: .3px; font-variant-numeric: tabular-nums; margin: 2px 0 4px; color: var(--primary-text); }
 .split-table .grp-row td { background: var(--surface-2); font-weight: 600; }
 .split-table td:first-child { min-width: 120px; }
-@media (max-width: 760px) { .reach-t { font-size: 19px; } .split-table td:nth-child(2) { display: none; } .split-table th:nth-child(2) { display: none; } }
+@media (max-width: 760px) { .reach-t { font-size: 19px; } .split-table .c-range, .split-table .c-pct { display: none; } }
 .stats-scope { gap: 10px; align-items: center; margin-top: 10px; }
 .stats-scope > .label { font-size: 12.5px; color: var(--muted); font-weight: 600; }
 .stats-scope select.on { border-color: var(--primary); color: var(--primary-text); font-weight: 600; }

@@ -1681,19 +1681,19 @@
     for (const g of groups) {
       const rows = (bd.accounts || []).filter((x) => (x.owner === undefined ? null : x.owner) === g.owner);
       if (!rows.length && !g.usd) continue;
-      tbody.append(h('tr', { class: 'grp-row' }, h('td', { colspan: '3' }, h('div', { class: 'row wrap', style: { gap: '8px' } },
-        g.owner === null ? h('b', { text: '我的号' }) : userName2(g.owner), g.owner !== null && cov ? covChip(cov[String(g.owner)]) : null)),
-        h('td', { class: 'num money-strong', text: usd(g.usd) }), h('td', { class: 'num faint', text: bd.usd ? ((g.usd / bd.usd) * 100).toFixed(1) + '%' : '' })));
+      tbody.append(h('tr', { class: 'grp-row' }, h('td', {}, h('div', { class: 'row wrap', style: { gap: '8px' } },
+        g.owner === null ? h('b', { text: '我的号' }) : userName2(g.owner), g.owner !== null && cov ? covChip(cov[String(g.owner)]) : null)), h('td', { class: 'c-range' }), h('td'),
+        h('td', { class: 'num money-strong', text: usd(g.usd) }), h('td', { class: 'num faint c-pct', text: bd.usd ? ((g.usd / bd.usd) * 100).toFixed(1) + '%' : '' })));
       for (const x of rows) {
         const part = x.start !== bd.start || x.end !== bd.end;
         tbody.append(h('tr', {}, h('td', {}, acctLabel(x.key, info, x.name), x.unmatched ? h('span', { class: 'chip chip-warn', text: '没对应到邮箱' }) : null),
-          h('td', { class: 'small nowrap faint' }, part ? [h('div', { text: fmtSec(x.start).slice(5) }), h('div', { text: '→ ' + fmtSec(x.end).slice(5) })] : '整段'),
-          h('td', { class: 'num' }, compact(x.requests)), h('td', { class: 'num', title: usd4(x.usd) }, usd(x.usd)), h('td')));
+          h('td', { class: 'small nowrap faint c-range' }, part ? [h('div', { text: fmtSec(x.start).slice(5) }), h('div', { text: '→ ' + fmtSec(x.end).slice(5) })] : '整段'),
+          h('td', { class: 'num' }, compact(x.requests)), h('td', { class: 'num', title: usd4(x.usd) }, usd(x.usd)), h('td', { class: 'c-pct' })));
       }
     }
     if (!tbody.children.length) return h('div', { class: 'muted small', text: '这段时间没有额度' });
     return h('div', { class: 'charges-wrap' }, h('table', { class: 'mini-table split-table' },
-      h('thead', {}, h('tr', {}, ['账号', '归属区间', '请求', '额度', '占比'].map((t) => h('th', { text: t })))), tbody));
+      h('thead', {}, h('tr', {}, [['账号'], ['归属区间', 'c-range'], ['请求'], ['额度'], ['占比', 'c-pct']].map(([t, k]) => h('th', { class: k || null, text: t })))), tbody));
   }
 
   async function settleUpstream(body) {
