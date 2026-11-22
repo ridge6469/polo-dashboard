@@ -578,7 +578,7 @@
     if (resetText === '重置时间未知' && (q.used_pct || 0) > 0) return h('span', { class: 'u-reset' }, '重置时间未知');
     return null;
   }
-  function usageBlock(r) {
+  function usageBlock(r, withStats = true) {
     const d = r.detail || {};
     const box = h('div', { class: 'usage' });
     const keys = [...WIN_ORDER.filter((k) => r.quota && r.quota[k]), ...Object.keys(r.quota || {}).filter((k) => !WIN_ORDER.includes(k))];
@@ -586,7 +586,7 @@
     for (const k of keys) {
       const q = r.quota[k];
       const hist = k === '5h' ? d.history && d.history['5h'] : k === '7d' ? d.history && d.history['7d'] : null;
-      if (hist && (toNum(hist.requests) || 0) > 0) {
+      if (withStats && hist && (toNum(hist.requests) || 0) > 0) {
         box.append(h('div', { class: 'u-stats' },
           h('span', { text: compact(hist.requests) + ' 次' }),
           h('span', { text: compact(hist.tokens) + ' tok' }),
@@ -605,15 +605,19 @@
     }
     return box;
   }
-  function statusCell(r) {
+  function statusBadge(r) {
     const d = r.detail || {};
-    let badge;
-    if (r.state && r.state !== '启用') badge = h('span', { class: 'badge b-gray', text: r.state });
-    else if (d.status) {
+    if (r.state && r.state !== '启用') return h('span', { class: 'badge b-gray', text: r.state });
+    if (d.status) {
       const s = d.status;
       const tone = s === '正常' ? 'b-ok' : /冷却|限流|过载/.test(s) ? 'b-warn' : 'b-bad';
-      badge = h('span', { class: 'badge ' + tone, text: s });
-    } else badge = h('span', { class: 'badge b-gray', text: r.state || '未知' });
+      return h('span', { class: 'badge ' + tone, text: s });
+    }
+    return h('span', { class: 'badge b-gray', text: r.state || '未知' });
+  }
+  function statusCell(r) {
+    const d = r.detail || {};
+    const badge = statusBadge(r);
     let sub = null;
     if (d.cooldown_text) sub = h('div', { class: 'cell-sub text-warn', text: d.cooldown_text });
     else if (d.usage_updated_at) {
@@ -671,6 +675,49 @@
       h('td', { 'data-label': '最近使用', class: 'nowrap' }, h('span', { title: d.last_used_at ? fmtTime(d.last_used_at) : '', text: dash(lastUsed) })));
   }
   const maxPct = (r) => Math.max(-1, ...Object.values(r.quota || {}).map((q) => (typeof q.used_pct === 'number' ? q.used_pct : -1)));
+  function ipLine(r, shared) {
+    const px = r.detail && r.detail.proxy;
+    const lead = h('span', { class: 'ac-ico', title: '出口 IP' }, icon('globe', 'icon icon-sm'));
+    if (!px) return h('div', { class: 'ac-ip' }, lead, h('span', { class: 'faint small', text: '出口未读取' }));
+    if (px.mode === 'direct') return h('div', { class: 'ac-ip' }, lead, h('span', { class: 'badge b-gray plain', text: '直连（不走代理）' }));
+    if (px.mode !== 'proxy') return h('div', { class: 'ac-ip' }, lead, h('span', { class: 'faint small', text: '出口未识别' }));
+    const ip = px.ip || px.host, lat = px.latency_ms;
+    const tone = px.health === '可用' ? (lat !== null && lat !== undefined && lat >= 500 ? 'b-warn' : 'b-ok') : 'b-bad';
+    const others = (shared[ip] || []).filter((n) => n !== (r.display_name || r.email));
+    return h('div', { class: 'ac-ip' }, lead,
+      h('span', { class: 'mono ip', title: '点击复制' + (px.host && px.host !== ip ? `\n主机名：${px.host}` : ''), onclick: () => copy(ip, ' IP') }, ip),
+      h('span', { class: 'mono faint xs', text: `${px.protocol || '代理'}:${dash(px.port)}` }),
+      px.health ? h('span', { class: 'badge ' + tone, text: px.health + (lat !== null && lat !== undefined ? ` ${lat}ms` : '') }) : null,
+      px.host && px.host !== ip ? h('span', { class: 'chip', title: px.host, text: '域名解析' }) : null,
+      others.length ? h('span', { class: 'chip chip-warn', title: '这些账号使用同一个出口 IP', text: '与 ' + others.join('、') + ' 共用' }) : null);
+  }
+  function accountCard(r, shared) {
+    const d = r.detail || {}, hl = r.health || {}, rt = d.realtime || {}, hs = d.history || {};
+    const mp = maxPct(r), off = r.state && r.state !== '启用';
+    const lastUsed = ago(d.last_used_at) || hl.last_used_display;
+    const old = d.usage_updated_at && Date.now() - toDate(d.usage_updated_at).getTime() > 30 * 60000;
+    const statRow = (label, x, costKey) => h('tr', {}, h('td', { text: label }), h('td', { text: compact(x && x.requests) }),
+      h('td', { text: compact(x && x.tokens) }), h('td', { class: 'text-ok', title: x && x.billed_cost ? `计费价 ${x.billed_cost}` : null, text: dash(x && x[costKey]) }));
+    const tags = [...(r.groups || []).map((g) => h('span', { class: 'chip chip-blue', text: g })), ...(r.plan || []).map((p) => h('span', { class: 'chip', text: p }))];
+    return h('div', { class: 'acard' + (off ? ' off' : mp >= 90 ? ' hot' : mp >= 75 ? ' warm' : '') },
+      h('div', { class: 'ac-head' },
+        h('div', { class: 'ac-id' },
+          h('div', { class: 'row', style: { gap: '8px', flexWrap: 'wrap' } }, h('span', { class: 'ac-name', text: dash(r.display_name) }), statusBadge(r)),
+          r.email ? h('div', { class: 'email mono', title: r.email + '（点击复制）', onclick: () => copy(r.email, '邮箱') }, r.email) : null),
+        h('div', { class: 'ac-meta' },
+          h('div', { title: d.last_used_at ? '最近使用：' + fmtTime(d.last_used_at) : '' }, lastUsed ? `${lastUsed}使用` : '—'),
+          d.usage_updated_at ? h('div', { class: old ? 'text-warn' : '', title: '后台最近一次刷新该账号用量：' + fmtTime(d.usage_updated_at) }, `用量 ${ago(d.usage_updated_at)}更新`) : null)),
+      tags.length ? h('div', { class: 'chips' }, tags) : null,
+      d.cooldown_text ? h('div', { class: 'notice n-warn', style: { margin: 0, padding: '6px 10px' } }, icon('clock', 'icon icon-sm'), h('span', { text: d.cooldown_text })) : null,
+      h('div', { class: 'ac-sec' }, usageBlock(r, false)),
+      h('div', { class: 'ac-sec' }, h('table', { class: 'mini' },
+        h('thead', {}, h('tr', {}, ['', '请求', 'Token', '费用'].map((x) => h('th', { text: x })))),
+        h('tbody', {}, statRow('今日', d.today, 'cost'), statRow('近 5 小时', hs['5h'], 'official_cost'), statRow('近 7 天', hs['7d'], 'official_cost')))),
+      h('div', { class: 'ac-sec ac-foot' }, ipLine(r, shared || {}),
+        h('div', { class: 'ac-rt' },
+          h('span', { text: `并发 ${dash(rt.concurrency)}` }), h('span', { text: `RPM ${dash(rt.rpm)}` }), h('span', { text: `TPM ${dash(rt.tpm)}` }), h('span', { text: `会话 ${dash(rt.sessions)}` }),
+          h('i'), h('span', { title: '最近 24 小时', text: `24h 请求 ${dash(hl.requests_24h)}` }), h('span', { text: `限流 ${dash(hl.rate_limits_24h)}` }), h('span', { text: `成功率 ${dash(hl.success_24h)}` }))));
+  }
   const isAbnormal = (r) => (r.state && r.state !== '启用') || (r.detail && ((r.detail.status && r.detail.status !== '正常') || r.detail.cooldown_text || (r.detail.proxy && r.detail.proxy.mode === 'proxy' && r.detail.proxy.health && r.detail.proxy.health !== '可用')));
   const SORTS = {
     '7d': { label: '7d 用量从高到低', fn: (r) => (r.quota && r.quota['7d'] && typeof r.quota['7d'].used_pct === 'number' ? r.quota['7d'].used_pct : -1), desc: true },
@@ -712,7 +759,7 @@
     const admin = isAdmin();
     const { main } = appLayout({ active: '#/dashboard', title: '用量看板', desc: admin ? '全部账号的额度、用量与重置时间' : '你可以查看的账号额度、用量与重置时间' });
     const notices = h('div');
-    const stats = h('div', { class: 'stats' }, skeletonStats(admin ? 8 : 6));
+    const stats = h('div', { class: 'stats' + (admin ? '' : ' s3') }, skeletonStats(admin ? 8 : 6));
     const search = leadInput('search', { class: 'input input-sm has-lead', placeholder: '搜索账号、邮箱、IP、分组', type: 'search' });
     search.wrap.style.width = '240px';
     let filter = 'all';
@@ -723,6 +770,10 @@
     const paintSeg = () => clear(seg, segs.map(([k, l]) => h('button', { type: 'button', class: filter === k ? 'on' : '', onclick: () => { filter = k; paintSeg(); drawTable(); } }, l)));
     paintSeg();
     const sortSel = h('select', { class: 'select select-sm', style: { width: 'auto' } }, Object.entries(SORTS).map(([k, v]) => h('option', { value: k, selected: k === sortKey, text: v.label })));
+    let view = localStorage.getItem('polo_view') === 'list' ? 'list' : 'card';
+    const viewSeg = h('div', { class: 'seg', title: '显示方式' });
+    const paintView = () => clear(viewSeg, [['card', '卡片'], ['list', '列表']].map(([k, l]) => h('button', { type: 'button', class: view === k ? 'on' : '', onclick: () => { view = k; localStorage.setItem('polo_view', k); paintView(); drawTable(); } }, l)));
+    paintView();
     sortSel.addEventListener('change', () => { sortKey = sortSel.value; localStorage.setItem('polo_sort', sortKey); drawTable(); });
     search.input.addEventListener('input', () => drawTable());
     const updated = h('span', { class: 'updated' });
@@ -734,14 +785,19 @@
     const table = h('table', { class: 'table responsive accounts' },
       h('thead', {}, h('tr', {}, ['账号 / 邮箱', '状态', '出口 IP', '额度窗口', '今日', '实时', '24 小时', '最近使用'].map((t) => h('th', { text: t })))), tbody);
     const ops = h('div', { class: 'ops' });
+    const grid = h('div', { class: 'agrid' }, Array.from({ length: 6 }, () => h('div', { class: 'acard' },
+      h('div', { class: 'skeleton sk-line', style: { width: '45%', height: '16px' } }), h('div', { class: 'skeleton sk-line', style: { width: '70%' } }),
+      h('div', { class: 'skeleton sk-line' }), h('div', { class: 'skeleton sk-line' }), h('div', { class: 'skeleton sk-line', style: { width: '80%' } }))));
+    const tableWrap = h('div', { class: 'table-wrap' }, table);
+    const listBox = h('div', {}, view === 'card' ? grid : tableWrap);
     append(main, notices, stats,
       h('div', { class: 'card' },
         h('div', { class: 'card-head' },
           h('div', { class: 'row wrap' }, h('h2', { class: 'card-title' }, icon('server'), '账号额度'), countText),
-          h('div', { class: 'toolbar' }, search.wrap, seg, sortSel)),
+          h('div', { class: 'toolbar' }, search.wrap, seg, sortSel, viewSeg)),
         h('div', { class: 'card-head', style: { borderBottom: '1px solid var(--border)', paddingTop: '10px', paddingBottom: '10px' } },
           updated, h('div', { class: 'toolbar' }, auto.el, refreshBtn)),
-        h('div', { class: 'table-wrap' }, table)),
+        listBox),
       admin ? ops : null);
 
     function drawTable() {
@@ -759,8 +815,17 @@
         return s.desc ? -c : c;
       });
       countText.textContent = `显示 ${list.length} / ${rows.length} 个`;
-      if (!list.length) clear(tbody, h('tr', {}, h('td', { colspan: '8' }, emptyState(rows.length ? '没有符合条件的账号' : (admin ? '暂无账号数据' : '管理员还没有给你分配账号')))));
-      else { const shared = sharedIps(rows); clear(tbody, list.map((r) => accountRow(r, shared))); }
+      const shared = sharedIps(rows);
+      const empty = () => emptyState(rows.length ? '没有符合条件的账号' : (admin ? '暂无账号数据' : '管理员还没有给你分配账号'));
+      if (view === 'card') {
+        if (listBox.firstChild !== grid) clear(listBox, grid);
+        if (!list.length) clear(grid, h('div', { style: { gridColumn: '1 / -1' } }, empty()));
+        else clear(grid, list.map((r) => accountCard(r, shared)));
+      } else {
+        if (listBox.firstChild !== tableWrap) clear(listBox, tableWrap);
+        if (!list.length) clear(tbody, h('tr', {}, h('td', { colspan: '8' }, empty())));
+        else clear(tbody, list.map((r) => accountRow(r, shared)));
+      }
       paintUpdated();
     }
     function paintUpdated() {
@@ -835,7 +900,7 @@
       if (!admin) return;
       const d = S.dash;
       const stateText = { rows_visible: '有结果', query_running: '原站查询进行中', no_visible_results: '默认视图无可见结果' };
-      clear(ops,
+      clear(ops, h('div', { class: 'ops-row' },
         opsCard('用量（当前窗口）', 'activity', d.usage, (u) => [
           ['区间消费', u.range_cost_display],
           ['已加载请求', u.row_count !== null && u.row_count !== undefined ? `${u.row_count} 条${u.more_available ? '（未全部加载）' : ''}` : null],
@@ -856,7 +921,7 @@
         opsCard('用量统计', 'chart', d.vendor, (v) => [
           ['状态', stateText[v.query_state] || v.query_state],
           ['请求数', v.metrics && v.metrics['请求数']], ['Tokens', v.metrics && v.metrics.Tokens], ['成本', v.metrics && v.metrics['成本']],
-        ]),
+        ])),
         proxyCard(d.proxies, d.accounts));
     }
     function proxyCard(res, accRes) {
@@ -898,7 +963,7 @@
           const e = settled[0].reason;
           if (e && (e.status === 401 || e.code === 'password_change_required')) return;
           toast(errText(e), 'bad');
-          if (!S.dash) clear(tbody, h('tr', {}, h('td', { colspan: '8' }, emptyState(errText(e), 'warning'))));
+          if (!S.dash) { const err = emptyState(errText(e), 'warning'); clear(tbody, h('tr', {}, h('td', { colspan: '8' }, err.cloneNode(true)))); clear(grid, h('div', { style: { gridColumn: '1 / -1' } }, err)); }
           return;
         }
         S.dash = Object.fromEntries(keys.map((k, i) => [k, settled[i].status === 'fulfilled' ? settled[i].value : null]));
