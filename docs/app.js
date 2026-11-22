@@ -692,8 +692,7 @@
           r.email ? h('span', { class: 'l-email', title: r.email + '（点击复制）', onclick: () => copy(r.email, '邮箱') }, r.email) : h('span', { class: 'l-email', text: dash(r.display_name) }),
           h('span', { class: 'switch' + (on ? ' on' : ''), title: `后台状态：${r.state || '未知'}（只读）` }, h('i'))),
         h('div', { class: 'l-line', style: { marginTop: '6px' } },
-          seatBadge(r, admin), fableHint(r),
-          (r.groups || []).map((g) => h('span', { class: 'chip chip-orange', text: g })),
+          seatBadge(r, admin), fableHint(r), ownerChip(r, admin),
           h('span', { class: 'l-name mono', title: '后台显示名', text: dash(r.display_name) })),
         h('div', { class: 'l-sub' }, meta || '—'),
         h('div', { class: 'l-sub' }, lastUsed ? h('span', { title: d.last_used_at ? '最近使用：' + fmtTime(d.last_used_at) : null, text: `${lastUsed}使用` }) : '未使用',
@@ -785,6 +784,14 @@
   }
   // ---------- Team 席位（管理员手动标记） ----------
   const isTeam = (r) => (r.plan || []).some((p) => /team/i.test(p));
+  // 归属标签（只有管理员能看到）：没有归属给成员 = 我的号；归属给成员显示成员备注名。
+  // （以前这里显示的是 Polo 的“分组”，全是 default，和归属无关）
+  function ownerChip(r, admin) {
+    if (!admin) return null;
+    if (r.owner) return h('span', { class: 'chip chip-blue', title: `归属：成员 ${r.owner.name}（在“结算 → 归属与设置”里改）`, text: r.owner.name });
+    return h('span', { class: 'chip chip-orange', title: '归属：我的号（没有归属给成员）', text: '我' });
+  }
+  const ownerText = (r) => (r.owner ? r.owner.name : '我');
   function seatBadge(r, admin) {
     if (!isTeam(r) && !r.seat) return null;
     const polo = (r.plan || []).find((p) => /team/i.test(p)) || '';
@@ -857,7 +864,7 @@
     const old = d.usage_updated_at && Date.now() - toDate(d.usage_updated_at).getTime() > 30 * 60000;
     const statRow = (label, x, costKey) => h('tr', {}, h('td', { text: label }), h('td', { text: compact(x && x.requests) }),
       h('td', { text: compact(x && x.tokens) }), h('td', { class: 'text-ok', title: x && x.billed_cost ? `计费价 ${x.billed_cost}` : null, text: dash(x && x[costKey]) }));
-    const tags = [seatBadge(r, isAdmin()), fableHint(r), ...planChips(r), ...(r.groups || []).map((g) => h('span', { class: 'chip chip-orange', text: g }))].filter(Boolean);
+    const tags = [seatBadge(r, isAdmin()), fableHint(r), ...planChips(r), ownerChip(r, isAdmin())].filter(Boolean);
     return h('div', { class: 'acard' + (off ? ' off' : mp >= 90 ? ' hot' : mp >= 75 ? ' warm' : '') },
       h('div', { class: 'ac-head' },
         h('div', { class: 'ac-id' },
@@ -919,7 +926,7 @@
     const { main } = appLayout({ active: '#/dashboard', title: '用量看板', desc: admin ? '全部账号的额度、用量与重置时间' : '你可以查看的账号额度、用量与重置时间' });
     const notices = h('div');
     const stats = h('div', { class: 'stats' + (admin ? '' : ' s3') }, skeletonStats(admin ? 8 : 6));
-    const search = leadInput('search', { class: 'input input-sm has-lead', placeholder: '搜索账号、邮箱、IP、分组', type: 'search' });
+    const search = leadInput('search', { class: 'input input-sm has-lead', placeholder: admin ? '搜索账号、邮箱、IP、归属（我 / 成员名）' : '搜索账号、邮箱、IP', type: 'search' });
     search.wrap.style.width = '240px';
     let filter = 'all';
     let sortKey = localStorage.getItem('polo_sort') || '7d';
@@ -965,7 +972,7 @@
       if (!d) return;
       const rows = (d.accounts && d.accounts.data && d.accounts.data.rows) || [];
       const q = search.input.value.trim().toLowerCase();
-      let list = rows.filter((r) => !q || [r.display_name, r.email, ipOf(r), r.seat === 'premium' ? 'team 高级' : r.seat === 'standard' ? 'team 标准 普通' : '待标记', ...(r.groups || []), ...(r.plan || [])].join(' ').toLowerCase().includes(q));
+      let list = rows.filter((r) => !q || [r.display_name, r.email, ipOf(r), r.seat === 'premium' ? 'team 高级' : r.seat === 'standard' ? 'team 标准 普通' : '待标记', admin ? ownerText(r) : '', ...(r.plan || [])].join(' ').toLowerCase().includes(q));
       if (filter === 'high') list = list.filter((r) => maxPct(r) >= 75);
       if (filter === 'abnormal') list = list.filter(isAbnormal);
       const s = SORTS[sortKey];
