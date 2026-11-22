@@ -351,6 +351,7 @@
     if (path.startsWith('/admin') && !isAdmin()) return go('#/dashboard');
     switch (path) {
       case '/dashboard': return pageDashboard();
+      case '/archived': return pageArchived();
       case '/admin/users': return pageUsers();
       case '/admin/invites': return pageInvites();
       case '/admin/logs': return pageLogs();
@@ -499,6 +500,7 @@
     append(nav,
       h('div', { class: 'side-section', text: '概览' }),
       link('#/dashboard', 'chart', '用量看板'),
+      link('#/archived', 'archive', '已归档'),
       isAdmin() ? [
         h('div', { class: 'side-section', text: '管理' }),
         link('#/admin/users', 'users', '用户管理', pendingBadge),
@@ -808,7 +810,12 @@
       else {
         if (a.stale) list.push(['n-warn', 'warning', '账号数据已超过 20 分钟没有成功更新，显示的可能不是最新结果。']);
         if (admin && a.data && a.data.complete === false) list.push(['n-warn', 'warning', '后台账号列表没有读全，显示的不是全部账号。']);
-        if (!admin && a.data && a.data.missing && a.data.missing.length) list.push(['n-info', 'info', `以下分配给你的账号在当前数据中没有找到：${a.data.missing.map(keyText).join('、')}。`]);
+        if (!admin && a.data && a.data.missing && a.data.missing.length) {
+          const arch = new Set((((d.archived || {}).data || {}).records || []).map((x) => x.account_key));
+          const gone = a.data.missing.filter((k) => arch.has(k)), lost = a.data.missing.filter((k) => !arch.has(k));
+          if (gone.length) list.push(['n-warn', 'archive', `分配给你的账号已归档：${gone.map(keyText).join('、')}。可在“已归档”里查看归档原因。`]);
+          if (lost.length) list.push(['n-info', 'info', `以下分配给你的账号在当前数据中没有找到：${lost.map(keyText).join('、')}。`]);
+        }
         if (admin && a.data && a.data.rows) {
           const dup = Object.entries(sharedIps(a.data.rows)).filter(([, v]) => v.length > 1);
           if (dup.length) list.push(['n-warn', 'warning', '以下账号共用同一个出口 IP：' + dup.map(([ip, v]) => `${v.join('、')}（${ip}）`).join('；') + '。']);
@@ -834,11 +841,18 @@
           ['已加载请求', u.row_count !== null && u.row_count !== undefined ? `${u.row_count} 条${u.more_available ? '（未全部加载）' : ''}` : null],
           ['状态分布', h('div', { class: 'chips' }, Object.entries(u.visible_status_counts || {}).map(([k, v]) => h('span', { class: 'chip ' + (k === '200' ? 'chip-blue' : ''), text: `${k} × ${v}` })))],
         ]),
-        opsCard('已归档账号', 'archive', d.archived, (x) => [
-          ['当前页', x.row_count !== null ? `${x.row_count} 个${x.has_next ? '（还有下一页）' : ''}` : null],
-          ['最早归档', x.archived_time_range && x.archived_time_range.first],
-          ['最近归档', x.archived_time_range && x.archived_time_range.last],
-        ]),
+        opsCard('已归档账号', 'archive', d.archived, (x) => {
+          const recs = [...(x.records || [])].sort((p, q) => String(q.archived_at).localeCompare(String(p.archived_at)));
+          const last = recs[0];
+          const counts = {};
+          for (const r of recs) { const k = reasonOf(r.error, r.health_status)[1]; counts[k] = (counts[k] || 0) + 1; }
+          return [
+            ['归档总数', `${recs.length} 个${x.complete === false ? '（未读全）' : ''}`],
+            ['最近归档', last ? `${last.display_name || last.email}（${ago(last.archived_at) || fmtTime(last.archived_at)}）` : null],
+            ['归档原因', h('div', { class: 'chips' }, Object.entries(counts).map(([k, v]) => h('span', { class: 'chip', text: `${k} × ${v}` })))],
+            ['', h('a', { class: 'btn btn-secondary btn-xs', href: '#/archived', style: { textDecoration: 'none' } }, '查看全部归档 →')],
+          ];
+        }),
         opsCard('用量统计', 'chart', d.vendor, (v) => [
           ['状态', stateText[v.query_state] || v.query_state],
           ['请求数', v.metrics && v.metrics['请求数']], ['Tokens', v.metrics && v.metrics.Tokens], ['成本', v.metrics && v.metrics['成本']],
@@ -877,7 +891,7 @@
       loading = true;
       refreshBtn.disabled = true; clear(refreshBtn, icon('refresh', 'icon icon-sm spin'), '刷新中');
       try {
-        const keys = admin ? Object.keys(ADMIN_RESOURCES) : ['accounts'];
+        const keys = admin ? Object.keys(ADMIN_RESOURCES) : ['accounts', 'archived'];
         const settled = await Promise.allSettled(keys.map((k) => api('GET', ADMIN_RESOURCES[k])));
         if (!S.token) return;
         if (settled.every((x) => x.status === 'rejected')) {
@@ -896,6 +910,102 @@
     }
     S.timers.push(setInterval(() => { if (!document.hidden && S.dash) { drawTable(); if (!admin) drawStats(); } }, 30000));
     if (S.dash) { drawNotices(); drawStats(); drawTable(); drawOps(); }
+    load();
+  }
+
+  // ============================================================
+  // 已归档
+  // ============================================================
+  function reasonOf(err, health) {
+    const s = `${err || ''} ${health || ''}`;
+    if (/account_on_hold/i.test(s)) return ['b-bad', '账号被暂停（on hold）', 'hold'];
+    if (/invalid_grant|refresh token|token_error|unauthorized|401/i.test(s)) return ['b-warn', 'OAuth 授权失效', 'auth'];
+    if (/suspend|banned|terminated|organization.{0,20}disabled/i.test(s)) return ['b-bad', '账号被封禁', 'ban'];
+    if (/rate.?limit|429/i.test(s)) return ['b-warn', '限流', 'other'];
+    if (/403|forbidden|permission/i.test(s)) return ['b-bad', '无权限', 'other'];
+    if (!err) return ['b-gray', '未记录原因', 'other'];
+    return ['b-gray', '其他异常', 'other'];
+  }
+  function spanText(a, b) {
+    const ms = toDate(b).getTime() - toDate(a).getTime();
+    if (isNaN(ms) || ms < 0) return '—';
+    const m = Math.floor(ms / 60000), d = Math.floor(m / 1440), hh = Math.floor((m % 1440) / 60);
+    if (d) return `${d} 天 ${hh} 小时`;
+    if (hh) return `${hh} 小时 ${m % 60} 分`;
+    return `${m} 分钟`;
+  }
+  async function pageArchived() {
+    const admin = isAdmin();
+    const { main } = appLayout({ active: '#/archived', title: '已归档', desc: admin ? '后台已归档的全部账号与归档原因' : '分配给你的账号中已归档的' });
+    let recs = [], filter = 'all', res = null;
+    const stats = h('div', { class: 'stats' }, skeletonStats(4));
+    const notice = h('div');
+    const search = leadInput('search', { class: 'input input-sm has-lead', placeholder: '搜索账号、邮箱、原因', type: 'search' });
+    search.wrap.style.width = '240px';
+    search.input.addEventListener('input', () => draw());
+    const seg = h('div', { class: 'seg' });
+    const segs = [['all', '全部'], ['auth', '授权失效'], ['hold', '被暂停'], ['ban', '被封禁'], ['other', '其他']];
+    const paintSeg = () => clear(seg, segs.map(([k, l]) => h('button', { type: 'button', class: filter === k ? 'on' : '', onclick: () => { filter = k; paintSeg(); draw(); } }, l)));
+    paintSeg();
+    const count = h('span', { class: 'muted small' });
+    const updated = h('span', { class: 'updated' });
+    const refresh = h('button', { class: 'btn btn-secondary btn-sm', type: 'button', onclick: () => load() }, icon('refresh', 'icon icon-sm'), '刷新');
+    const tbody = h('tbody', {}, h('tr', {}, h('td', { colspan: '7' }, h('div', { class: 'skeleton sk-line' }))));
+    append(main, notice, stats, h('div', { class: 'card' },
+      h('div', { class: 'card-head' }, h('div', { class: 'row wrap' }, h('h2', { class: 'card-title' }, icon('archive'), '归档账号'), count),
+        h('div', { class: 'toolbar' }, search.wrap, seg)),
+      h('div', { class: 'card-head', style: { paddingTop: '10px', paddingBottom: '10px' } }, updated, refresh),
+      h('div', { class: 'table-wrap' }, h('table', { class: 'table responsive wide archived' },
+        h('thead', {}, h('tr', {}, ['账号 / 邮箱', '归档原因', '归档时间', '添加时间', '在池时长', '最后使用', '类型 / 健康'].map((t) => h('th', { text: t })))), tbody))));
+
+    function drawStats() {
+      const week = recs.filter((r) => r.archived_at && Date.now() - toDate(r.archived_at).getTime() < 7 * 86400000).length;
+      const auth = recs.filter((r) => reasonOf(r.error, r.health_status)[2] === 'auth').length;
+      const hold = recs.filter((r) => ['hold', 'ban'].includes(reasonOf(r.error, r.health_status)[2])).length;
+      const back = recs.filter((r) => r.in_pool).length;
+      clear(stats,
+        statCard('归档总数', recs.length, 'archive', 'blue', res && res.data && res.data.complete === false ? '后台列表未读全' : '全部归档记录'),
+        statCard('近 7 天归档', week, 'clock', 'purple'),
+        statCard('授权失效', auth, 'key', auth ? 'warn' : 'ok', 'OAuth refresh token 失效'),
+        statCard('被暂停 / 封禁', hold, 'warning', hold ? 'bad' : 'ok', back ? `另有 ${back} 个已重新添加` : '上游返回的账号状态'));
+    }
+    function draw() {
+      const q = search.input.value.trim().toLowerCase();
+      const list = recs.filter((r) => (filter === 'all' || reasonOf(r.error, r.health_status)[2] === filter)
+        && (!q || [r.display_name, r.email, r.error].join(' ').toLowerCase().includes(q)))
+        .sort((a, b) => String(b.archived_at).localeCompare(String(a.archived_at)));
+      count.textContent = `显示 ${list.length} / ${recs.length} 个`;
+      if (!list.length) { clear(tbody, h('tr', {}, h('td', { colspan: '7' }, emptyState(recs.length ? '没有符合条件的归档账号' : (admin ? '没有已归档的账号' : '分配给你的账号都没有被归档'), 'archive')))); return; }
+      clear(tbody, list.map((r) => {
+        const [bc, bt] = reasonOf(r.error, r.health_status);
+        return h('tr', {},
+          h('td', { 'data-label': '' },
+            h('div', { class: 'cell-title', text: dash(r.display_name) }),
+            r.email ? h('div', { class: 'email mono', title: r.email + '（点击复制）', onclick: () => copy(r.email, '邮箱') }, r.email) : null,
+            r.in_pool ? h('div', { class: 'chips', style: { marginTop: '5px' } }, h('span', { class: 'chip chip-blue', title: '同一邮箱当前又在账号池中，这条是之前的归档记录', text: '已重新添加（在账号池中）' })) : null),
+          h('td', { 'data-label': '归档原因' }, h('span', { class: 'badge ' + bc, text: bt }),
+            r.error ? h('div', { class: 'err-text', title: r.error, text: r.error }) : null),
+          h('td', { 'data-label': '归档时间', class: 'nowrap' }, h('div', { text: fmtTime(r.archived_at) }), h('div', { class: 'cell-sub', text: ago(r.archived_at) || '' })),
+          h('td', { 'data-label': '添加时间', class: 'nowrap' }, fmtTime(r.added_at)),
+          h('td', { 'data-label': '在池时长', class: 'nowrap' }, r.added_at && r.archived_at ? spanText(r.added_at, r.archived_at) : '—'),
+          h('td', { 'data-label': '最后使用', class: 'nowrap' }, r.last_used_at ? h('div', {}, h('div', { text: fmtTime(r.last_used_at) }), h('div', { class: 'cell-sub', text: r.archived_at ? `归档前 ${spanText(r.last_used_at, r.archived_at)}` : '' })) : h('span', { class: 'faint', text: '—' })),
+          h('td', { 'data-label': '类型 / 健康' }, h('div', { class: 'mono small', text: dash(r.provider_type) }),
+            r.health_status ? h('div', { style: { marginTop: '4px' } }, h('span', { class: 'chip', text: r.health_status })) : null));
+      }));
+    }
+    async function load() {
+      refresh.disabled = true;
+      try {
+        res = await api('GET', '/v1/archived-accounts');
+        recs = (res.data && res.data.records) || [];
+        clear(updated, icon('clock', 'icon icon-sm'), `数据采集于 ${fmtTime(res.sampled_at, false)}（${ago(res.sampled_at)}）`,
+          res.stale ? h('span', { class: 'badge b-warn', style: { marginLeft: '6px' }, text: '可能已过期' }) : null);
+        clear(notice, res.data && res.data.complete === false ? h('div', { class: 'notice n-warn' }, icon('warning'), h('span', { text: '后台归档列表没有读全，显示的不是全部归档账号。' })) : null);
+        drawStats(); draw();
+      } catch (e) {
+        clear(stats); clear(tbody, h('tr', {}, h('td', { colspan: '7' }, emptyState(errText(e), 'warning'))));
+      } finally { refresh.disabled = false; }
+    }
     load();
   }
 

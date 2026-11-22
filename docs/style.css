@@ -339,6 +339,8 @@ html.dark .seg button.on { background: var(--surface-3); }
 .empty { text-align: center; padding: 48px 16px; color: var(--muted); }
 .table.accounts { min-width: 1300px; }
 .table.wide { min-width: 1000px; }
+.table.archived { min-width: 1180px; }
+.err-text { font-size: 12px; color: var(--muted); max-width: 400px; white-space: normal; word-break: break-word; margin-top: 5px; line-height: 1.45; }
 .table.accounts .cell-sub { white-space: nowrap; }
 .email { font-size: 11.5px; color: var(--muted); margin-top: 2px; max-width: 230px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: copy; }
 .email:hover, .ip:hover { color: var(--primary-text); }
