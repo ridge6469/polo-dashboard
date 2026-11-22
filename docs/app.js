@@ -1744,7 +1744,7 @@
         p ? h('div', { class: 'faint xs', text: `${fmtSec(p.start)} → ${fmtSec(p.end)} · Polo 新增 ${usd(p.usd)}（我的号 ${usd(p.mine_usd)} · 成员号 ${usd(p.members_usd)}）${Math.abs(carry) >= 0.00005 ? ` ${carry > 0 ? '+' : '−'} 上次结转 ${usd4(Math.abs(carry))} = ${usd(pTot)}` : ''}` }) : null)),
       h('div', { class: 'card-body' }, p ? splitTable(p, info, p.coverage) : emptyState('更新中…', 'clock')));
     // 结算点记录
-    const COLS = ['次', '区间（达成时间）', '额度', '我的号', '成员号', '收款', '给成员结算', ''];
+    const COLS = ['次', '区间（达成时间）', '额度（记账）', '我的号（Polo）', '成员号（Polo）', '收款', '给成员结算', ''];
     const tbody = h('tbody');
     st.points.forEach((x) => {
       const voided = x.status !== 'active';
