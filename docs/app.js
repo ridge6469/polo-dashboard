@@ -1328,7 +1328,7 @@
   }
   function chargesTable(charges, { admin = false, reload } = {}) {
     if (!charges.length) return h('div', { class: 'muted small', text: '还没有成本记录' });
-    return h('table', { class: 'mini-table charges' },
+    return h('div', { class: 'charges-wrap' }, h('table', { class: 'mini-table charges' },
       h('thead', {}, h('tr', {}, h('th', { text: '日期' }), h('th', { text: '账号' }), h('th', { text: '类型' }), h('th', { text: '席位' }), h('th', { class: 'num', text: '金额' }), h('th', { text: admin ? '' : '状态' }))),
       h('tbody', {}, charges.map((x) => {
         const amount = x.amount_cny === null ? h('span', { class: 'text-warn', text: '待定（未标席位）' }) : h('span', { class: x.waived ? 'strike' : '', text: cny(x.amount_cny) });
@@ -1340,7 +1340,7 @@
           h('td', {}, h('b', { text: x.name || x.account_key }), x.email ? h('div', { class: 'email mono', text: x.email }) : null,
             admin && x.username ? h('div', { class: 'faint xs', text: '记在 ' + x.username + ' 名下' }) : null),
           h('td', { text: KIND[x.kind] || x.kind }), h('td', { text: SEAT_CN[x.seat] || '—' }), h('td', { class: 'num' }, amount), h('td', {}, ops));
-      })));
+      }))));
   }
   function editCharge(x, reload) {
     const inp = h('input', { class: 'input', type: 'number', min: '0', step: '0.01', value: x.amount_cny === null ? '' : x.amount_cny, placeholder: '留空 = 按席位价格' });

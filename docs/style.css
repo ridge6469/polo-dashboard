@@ -559,6 +559,13 @@ td.money-strong, b.money-strong { color: var(--primary-text); }
 .mini-table.charges th { text-align: left; }
 .mini-table.charges th.num, .mini-table.charges td.num { text-align: right; }
 .mini-table.charges td:last-child { text-align: right; }
+.charges-wrap { overflow-x: auto; max-width: 100%; }
+.mini-table.charges th, .mini-table.charges td:nth-child(1), .mini-table.charges td:nth-child(3),
+.mini-table.charges td:nth-child(4), .mini-table.charges td:nth-child(5) { white-space: nowrap; }
+@media (max-width: 760px) {
+  .mini-table.charges .email { display: none; }
+  .mini-table.charges td, .mini-table.charges th { padding: 6px 5px; }
+}
 .grid-half { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
 
 /* ---------- 响应式 ---------- */
