@@ -342,8 +342,8 @@ html.dark .seg button.on { background: var(--surface-3); }
 .table.accounts { min-width: 1080px; }
 .table.accounts td { padding: 12px 12px; }
 .table.accounts td:first-child { padding-left: 18px; width: 270px; max-width: 270px; }
-.l-first { flex-wrap: nowrap; }
-.l-first .l-email { flex: 0 1 auto; min-width: 0; max-width: none; }
+.l-line.l-first { flex-wrap: nowrap; }
+.l-line.l-first .l-email { flex: 0 1 auto; min-width: 0; max-width: none; }
 .lrow.off { opacity: .66; }
 .l-line { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
 .tag-claude { font-size: 10.5px; font-weight: 650; padding: 0 6px; border-radius: 5px; border: 1px solid var(--primary-2); color: var(--primary-text); line-height: 17px; flex-shrink: 0; }
