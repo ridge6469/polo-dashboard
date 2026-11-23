@@ -147,13 +147,13 @@
   // ============================================================
   // 提示、弹窗、菜单
   // ============================================================
-  function toast(text, kind = 'info') {
+  function toast(text, kind = 'info', ms = 3800) {
     let box = document.querySelector('.toasts');
     if (!box) { box = h('div', { class: 'toasts' }); document.body.append(box); }
     const ic = { ok: 'check', bad: 'x', warn: 'warning', info: 'info' }[kind] || 'info';
     const t = h('div', { class: 'toast t-' + kind, role: 'status' }, icon(ic), h('span', { text }));
     box.append(t);
-    setTimeout(() => t.remove(), 3800);
+    setTimeout(() => t.remove(), ms);
   }
 
   function modal({ title, body, actions = [], wide = false, onClose }) {
@@ -695,6 +695,8 @@
         px.host && px.host !== ip ? h('span', { class: 'chip', title: px.host, text: '域名解析' }) : null,
         others.length ? h('span', { class: 'chip chip-warn', title: '这些账号使用同一个出口 IP', text: '与 ' + others.join('、') + ' 共用' }) : null));
   }
+  // 列表里“并发 / 会话 / 已绑定会话”的说明（电脑悬停、手机点击都能看）
+  const rtHelp = (conc, sessions, slots) => `圆圈里的 ${conc} = 此刻正在发的请求数；会话 ${dash(sessions)} = 此刻活跃的会话；已绑定会话 ${dash(slots)} = Polo 固定分给这个号、还没释放的对话数（同一段对话一直走同一个号），不是正在用的数量，跟额度和结算无关。`;
   function accountRow(r, shared) {
     const d = r.detail || {}, hl = r.health || {}, t = d.today || {}, rt = d.realtime || {}, hs = d.history || {};
     const admin = isAdmin();
@@ -719,10 +721,10 @@
       // 状态 + 实时
       h('td', { 'data-label': '状态 / 实时' },
         h('div', { class: 'l-line' }, statusBadge(r),
-          h('span', { class: 'rt-box', title: `实时并发 ${conc} · 会话 ${dash(rt.sessions)} · Session Slots 使用中 ${dash(hl.session_slots)}` },
+          h('span', { class: 'rt-box', style: { cursor: 'pointer' }, title: rtHelp(conc, rt.sessions, hl.session_slots) + '（点击也能看）', onclick: () => toast(rtHelp(conc, rt.sessions, hl.session_slots), 'info', 8000) },
             h('b', { class: 'rt-num' + (conc > 0 ? ' live' : ''), text: String(conc) }),
             h('span', { text: `会话 ${dash(rt.sessions)}` }),
-            hl.session_slots !== undefined && hl.session_slots !== null ? h('span', { class: 'faint', text: `· 槽位 ${hl.session_slots}` }) : null)),
+            hl.session_slots !== undefined && hl.session_slots !== null ? h('span', { class: 'faint', text: `· 已绑定会话 ${hl.session_slots}` }) : null)),
         healthBar(r),
         h('div', { class: 'l-line', style: { marginTop: '6px' } }, ipMini(r, shared || {}))),
       // 请求
