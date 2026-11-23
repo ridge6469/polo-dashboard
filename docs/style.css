@@ -987,3 +987,14 @@ tr:hover .nick-btn { opacity: 1; }
   .qw-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .qc-table td.num { text-align: left; }
 }
+/* v37：缓存卡片里的“并发、上下文和缓存”“官方额度怎么算（反推）”两节 */
+.qc-sec { padding: 14px 18px 16px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.qc-sec h4 { margin: 0; font-size: 14px; font-weight: 650; color: var(--text); }
+.qc-sec p { margin: 0; line-height: 1.6; overflow-wrap: anywhere; }
+.qc-sec .table-wrap { margin: 2px -18px 0; }
+.qc-list { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; line-height: 1.55; }
+.qc-list li { overflow-wrap: anywhere; }
+@media (max-width: 760px) {
+  .qc-sec { padding: 12px 14px 14px; }
+  .qc-sec .table-wrap { margin: 2px -14px 0; }
+}

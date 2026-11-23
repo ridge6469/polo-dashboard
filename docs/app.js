@@ -731,6 +731,12 @@
     if (c.until && toDate(c.until).getTime() <= Date.now()) return null;
     return c;
   }
+  // 用满保持：服务器记下的“某个窗口已满、到某时恢复”。到点前一直按用满算（Polo 的冷却提示消失、用量没数据也不变）
+  function holdsOf(r) {
+    const live = liveOf(r), hs = (live && live.hold) || {}, out = [];
+    for (const k of QW_KINDS) if (hs[k] && hs[k].until && toDate(hs[k].until).getTime() > Date.now()) out.push(Object.assign({ window: k }, hs[k]));
+    return out;
+  }
   // 把冷却原因里“满了的窗口”合并进额度：Polo 被拒后这个窗口常显示 0%，这里按 util 显示（util=1.0 → 100%），恢复时间当重置时间
   function applyCooldown(rows) {
     for (const r of rows) {
@@ -746,12 +752,22 @@
           r.quota[k] = Object.assign({}, r.quota[k], { used_pct: lp[k] });
         }
       }
-      if (!c || !c.window) continue;
-      const key = /^fable/i.test(c.window) ? (Object.keys(r.quota_raw).find((k) => /^fable/i.test(k)) || c.window) : c.window;
-      const base = r.quota[key] || {};
-      const p = c.util === null || c.util === undefined ? 100 : Math.round(c.util * 1000) / 10;
-      r.quota = Object.assign({}, r.quota, { [key]: Object.assign({}, base, {
-        used_pct: Math.max(typeof base.used_pct === 'number' ? base.used_pct : 0, p), status: null, reset_at: c.until || base.reset_at || null, by_cool: true }) });
+      if (c && c.window) {
+        const key = /^fable/i.test(c.window) ? (Object.keys(r.quota_raw).find((k) => /^fable/i.test(k)) || c.window) : c.window;
+        const base = r.quota[key] || {};
+        const p = c.util === null || c.util === undefined ? 100 : Math.round(c.util * 1000) / 10;
+        r.quota = Object.assign({}, r.quota, { [key]: Object.assign({}, base, {
+          used_pct: Math.max(typeof base.used_pct === 'number' ? base.used_pct : 0, p), status: null, reset_at: c.until || base.reset_at || null, by_cool: true }) });
+      }
+      for (const hd of holdsOf(r)) {
+        const base = r.quota[hd.window] || {};
+        r.quota = Object.assign({}, r.quota, { [hd.window]: Object.assign({}, base, { used_pct: 100, status: null, reset_at: hd.until, by_cool: true, held: hd }) });
+        // 文字提示：没有冷却行、或者同一个窗口、或者周额度（比 5h 更久）时，用记下的恢复时间
+        if (!r.cool || !r.cool.window || r.cool.window === hd.window || hd.window === '7d') {
+          r.cool = Object.assign({}, r.cool && r.cool.window === hd.window ? r.cool : {}, { window: hd.window, util: 1, until: hd.until, held: hd,
+            reason: (r.cool && r.cool.window === hd.window && r.cool.reason) || hd.why || `${hd.window} 额度已满` });
+        }
+      }
     }
   }
   const coolWin = (c) => (c && c.window ? (WIN[c.window] ? WIN[c.window].label : c.window) : null);
@@ -761,7 +777,9 @@
     const head = w ? (c.util === null || c.util === undefined || c.util >= 1 ? `${w} 额度已满` : `${w} 额度快满（${Math.round(c.util * 100)}%）`) : '冷却中';
     return head + (left ? ` · ${left}后恢复` : '');
   }
-  const coolTitle = (c) => (c ? `Polo 冷却原因：${c.reason}${c.until ? `\n预计恢复：${fmtTime(c.until)}（按 Polo 显示的剩余时间算，精确到分钟）` : ''}` : '');
+  const HOLD_SRC = { util: 'Polo 的用量到了 100%', cooldown: 'Polo 的冷却原因', card: 'Polo 卡片上的冷却提示' };
+  const coolTitle = (c) => (c ? `Polo 冷却原因：${c.reason}${c.until ? `\n预计恢复：${fmtTime(c.until)}` + (c.held ? '' : '（按 Polo 显示的剩余时间算，精确到分钟）') : ''}`
+    + (c.held ? `\n已记下（${fmtTime(c.held.since)} 起，来自${HOLD_SRC[c.held.src] || c.held.src}）：到恢复时间前一直按用满算，Polo 的提示消失也不变；这期间不让 Polo 页面去刷新这个号的用量。` : '') : '');
   // ---------- 额度窗口：每个号当前 5h / 7d 窗口里跑了多少额度（所有模型合计，和结算同一个数） ----------
   const QW_KINDS = ['5h', '7d'];
   const qwKey = (r) => String(r.account_key || r.email || '').toLowerCase();
@@ -1488,11 +1506,13 @@
     // 缓存和额度：缓存占比高低对“每 1% 额度能跑多少钱”的影响
     let cdata = null, cchart = null, ckind = localStorage.getItem('polo_qc_kind') === '7d' ? '7d' : '5h';
     const cSeg = h('div', { class: 'seg' }), cSum = h('div', { class: 'qc-sum' }), cChartEl = h('div', { class: 'chart' }), cBins = h('tbody');
+    const cConc = h('div', { class: 'qc-sec' }), cForm = h('div', { class: 'qc-sec' });
     const cacheCard = h('div', { class: 'card qc-card' },
       h('div', { class: 'card-head' }, h('h3', { class: 'card-title' }, icon('chart'), '缓存和额度'), cSeg),
       h('div', { class: 'card-body' }, cSum, cChartEl),
       h('div', { class: 'table-wrap' }, h('table', { class: 'table responsive qc-table' },
-        h('thead', {}, h('tr', {}, ['缓存占比', '段数', '额度涨了', '花了', '每 1% 额度'].map((x) => h('th', { text: x })))), cBins)));
+        h('thead', {}, h('tr', {}, ['缓存占比', '段数', '额度涨了', '花了', '每 1% 额度'].map((x) => h('th', { text: x })))), cBins)),
+      cConc, cForm);
     append(main, help, err, ovCard, detail, cacheCard);
     const cpct = (x) => (x === null || x === undefined ? '—' : (Math.round(x * 1000) / 10).toFixed(1).replace(/\.0$/, '') + '%');
     function drawCache() {
@@ -1526,6 +1546,93 @@
         h('td', { 'data-label': '花了', class: 'num', text: usd(b.usd) }),
         h('td', { 'data-label': '每 1% 额度', class: 'num' }, h('b', { text: usd(b.per_pct) })))));
       drawCacheChart();
+      drawConc();
+      drawFormula();
+    }
+    const rStrength = (r) => (r === null || r === undefined ? '算不出' : Math.abs(r) >= 0.5 ? '关系明显' : Math.abs(r) >= 0.3 ? '有一定关系' : '关系很弱');
+    const rLine = (r, a, up, down) => (r === null || r === undefined ? null
+      : h('li', {}, `${a}，${r >= 0 ? up : down}`, h('span', { class: 'faint', text: `（相关系数 ${r.toFixed(2)}，${rStrength(r)}）` })));
+    const ktok = (v) => (v === null || v === undefined ? '—' : Math.round(v / 1000).toLocaleString('en-US') + 'k');
+    const binTable = (rows, first, label) => h('div', { class: 'table-wrap' }, h('table', { class: 'table responsive qc-table' },
+      h('thead', {}, h('tr', {}, [first, '步数', '额度涨了', '平均并发', '缓存占比', '每请求 token', '每 1% 额度'].map((x) => h('th', { text: x })))),
+      h('tbody', {}, rows.map((g) => h('tr', {},
+        h('td', { 'data-label': first, text: label(g) }),
+        h('td', { 'data-label': '步数', class: 'num', text: String(g.n) }),
+        h('td', { 'data-label': '额度涨了', class: 'num', text: `${Math.round(g.dp)} 个点` }),
+        h('td', { 'data-label': '平均并发', class: 'num', text: g.conc.toFixed(1) }),
+        h('td', { 'data-label': '缓存占比', class: 'num', text: cpct(g.cache) }),
+        h('td', { 'data-label': '每请求 token', class: 'num', text: ktok(g.ctx) }),
+        h('td', { 'data-label': '每 1% 额度', class: 'num' }, h('b', { text: usd(g.per) })))))));
+    // 并发、每个请求带的 token 和缓存、额度的关系（按 % 每变一次的“步”统计）
+    function drawConc() {
+      const C = cdata.conc && cdata.conc[ckind], out = [h('h4', { text: '并发、上下文和缓存' })];
+      out.push(h('p', { class: 'faint xs', text: '每一步 = Polo 刷新一次用量 %（约 10 分钟一次）且 % 变了。平均并发 = 这一步里这个号同时在跑的请求数（每 30 秒读一次）；每请求 token = 全部 token ÷ 请求数，就是每次请求带的上下文大小（含缓存）。' + (cdata.conc_since ? `从 ${fmtTime(cdata.conc_since)} 开始记录并发。` : '') }));
+      if (!C || C.n < 10) {
+        out.push(h('p', { text: `数据还不够：现在有 ${C ? C.n : 0} 步带并发数据，至少要 10 步。号跑起来以后每小时会多几步。` }));
+        return clear(cConc, out);
+      }
+      const r = C.corr || {};
+      out.push(h('ul', { class: 'qc-list' }, [
+        rLine(r.conc_cache, '并发越高', '缓存占比越高', '缓存占比越低'),
+        rLine(r.ctx_cache, '每个请求带的 token 越多', '缓存占比越高', '缓存占比越低'),
+        rLine(r.cache_per, '缓存占比越高', '每 1% 额度跑的钱越多', '每 1% 额度跑的钱越少'),
+        rLine(r.conc_per, '并发越高', '每 1% 额度跑的钱越多', '每 1% 额度跑的钱越少'),
+        rLine(r.ctx_per, '每个请求带的 token 越多', '每 1% 额度跑的钱越多', '每 1% 额度跑的钱越少'),
+      ].filter(Boolean)));
+      const M = C.multi && C.multi.coef;
+      if (M) {
+        const term = (k, scale, what) => {
+          const b = M[k].b * scale, se = (M[k].se || 0) * scale, sig = Math.abs(b) > 2 * se;
+          return `${what}，每 1% 额度${b >= 0 ? '多' : '少'} ${usd(Math.abs(b))}` + (sig ? '' : '（在误差范围内，算不上）');
+        };
+        out.push(h('p', {}, h('b', { text: '三个一起看（排除彼此干扰）：' }),
+          [term('cache', 0.1, '缓存占比高 10 个百分点'), term('conc', 1, '并发多 1'), term('ctx', 1, '每请求多 10 万 token')].join('；') + `。（${C.n} 步）`));
+      }
+      out.push(binTable(C.by_conc || [], '并发区间', (g) => (g.hi ? `${g.lo} – ${g.hi}` : `${g.lo} 以上`)));
+      out.push(binTable(C.by_ctx || [], '每请求 token 区间', (g) => (g.hi ? `${ktok(g.lo)} – ${ktok(g.hi)}` : `${ktok(g.lo)} 以上`)));
+      clear(cConc, out);
+    }
+    // 额度公式反推：涨的点数 = a×输入输出的钱 + b×缓存写的钱 + c×缓存读的钱（钱按 Polo 官方价）
+    function drawFormula() {
+      const F = cdata.formula && cdata.formula[ckind], out = [h('h4', { text: '官方额度怎么算（反推）' })];
+      const pr = cdata.prices || {}, po = pr.opus || [4, 20, 5, 0.2], pf = pr.fable || [8, 40, 10, 0.2];
+      out.push(h('p', { class: 'faint xs', text: `做法：每一步花的钱（Polo 官方价）拆成输入输出、缓存写、缓存读三部分，拟合“用量涨的点数 = a×输入输出的钱 + b×缓存写的钱 + c×缓存读的钱”。如果官方额度就是按 API 价算的，a、b、c 应该一样；c 小说明缓存读在额度里比它的价格“便宜”。Polo 不分号给缓存读 / 写，只有自己号池的合计，所以只用这个号占自己号池花费 ≥ ${Math.round((cdata.dom_min || 0.8) * 100)}% 的步；输入和输出用单价解出来（只在几乎全是一种模型的步里）。单价（每百万 token，输入 / 输出 / 缓存写 / 缓存读）：Opus ${po.join(' / ')}，Fable ${pf.join(' / ')}。` }));
+      const need = 15;
+      if (!F || !F.three || F.n < need) {
+        out.push(h('p', { text: `数据还不够：现在有 ${F ? F.n : 0} 步可用（共 ${F ? F.n_all : 0} 步），至少要 ${need} 步，而且用法要有变化（缓存写时多时少、输出时多时少）才分得开。要看准大概需要几百步（几天）。` }));
+        return clear(cForm, out);
+      }
+      const k = F.base && F.base.coef.usd.b, T = F.three.coef, sp = F.spend || {};
+      const rows = [['io', '输入 + 输出', sp.c_io], ['cw', '缓存写', sp.c_cw], ['cr', '缓存读', sp.c_cr]];
+      const rel = (x) => (k ? x / k : null);
+      out.push(h('p', {}, `按 API 价统一算：每 1% ${ckind} 额度 ≈ `, h('b', { text: usd(1 / k) }), h('span', { class: 'faint', text: `（${F.n} 步、共涨 ${Math.round(F.dp)} 个点；其中 Opus 占 ${cpct(F.opus_share)}）` })));
+      out.push(h('div', { class: 'table-wrap' }, h('table', { class: 'table responsive qc-table' },
+        h('thead', {}, h('tr', {}, ['哪类', '占花费', '1 美元耗多少额度', '相对平均', '每 1% 额度可跑'].map((x) => h('th', { text: x })))),
+        h('tbody', {}, rows.map(([key, name, spend]) => {
+          const b = T[key].b, se = T[key].se || 0;
+          return h('tr', {},
+            h('td', { 'data-label': '哪类', text: name }),
+            h('td', { 'data-label': '占花费', class: 'num', text: cpct(sp.usd ? spend / sp.usd : null) }),
+            h('td', { 'data-label': '1 美元耗多少额度', class: 'num', text: `${b.toFixed(3)} ± ${(2 * se).toFixed(3)} 个点` }),
+            h('td', { 'data-label': '相对平均', class: 'num' }, h('b', { text: k ? `${rel(b).toFixed(2)} 倍` : '—' }), h('span', { class: 'faint', text: k ? ` ±${(2 * se / k).toFixed(2)}` : '' })),
+            h('td', { 'data-label': '每 1% 额度可跑', class: 'num', text: b > 0 ? usd(1 / b) : '—' }));
+        })))));
+      const cr = T.cr, lo = (cr.b - 2 * (cr.se || 0)) / k, hi = (cr.b + 2 * (cr.se || 0)) / k;
+      const verdict = hi < 1 ? `缓存读在官方额度里比它的 API 价“便宜”（只算 ${lo.toFixed(2)}–${hi.toFixed(2)} 倍）：缓存读占的钱越多，每 1% 额度能跑的钱越多。`
+        : lo > 1 ? `缓存读在官方额度里比它的 API 价“贵”（算 ${lo.toFixed(2)}–${hi.toFixed(2)} 倍）：缓存读占的钱越多，每 1% 额度能跑的钱越少。`
+        : `目前看不出缓存读和其他的区别（${lo.toFixed(2)}–${hi.toFixed(2)} 倍，包含 1），可能就是按 API 价算，也可能数据还不够。`;
+      out.push(h('p', {}, h('b', { text: verdict }), h('span', { class: 'faint', text: `（± 是大约 95% 的范围；R² ${F.three.r2 !== null ? F.three.r2.toFixed(2) : '—'}）` })));
+      const Q = F.four && F.n_split >= 20 && F.four.coef;
+      if (Q) {
+        const P = (F.opus_share === null || F.opus_share >= 0.5) ? po : pf, nm2 = (F.opus_share === null || F.opus_share >= 0.5) ? 'Opus' : 'Fable';
+        const eq = (key, i) => (Q[key].b * P[i]) / (Q.in.b * P[0]);
+        out.push(h('p', {}, h('b', { text: '按 token 换算（输入、输出分开）：' }),
+          `1 个输出 token ≈ ${eq('out', 1).toFixed(1)} 个输入 token，1 个缓存写 ≈ ${eq('cw', 2).toFixed(2)} 个，1 个缓存读 ≈ ${eq('cr', 3).toFixed(3)} 个`,
+          h('span', { class: 'faint', text: `（${nm2} 的 API 价里是 ${(P[1] / P[0]).toFixed(1)} / ${(P[2] / P[0]).toFixed(2)} / ${(P[3] / P[0]).toFixed(3)}；${F.n_split} 步）` })));
+      } else if (F.n_split < 20) {
+        out.push(h('p', { class: 'faint', text: `输入和输出分开算还要更多数据：现在 ${F.n_split} 步，至少 20 步。` }));
+      }
+      clear(cForm, out);
     }
     async function drawCacheChart() {
       const segs = ((cdata && cdata.segments) || []).filter((s) => s.kind === ckind && s.all > 0 && s.io !== null && s.p1 > s.p0);
