@@ -1894,7 +1894,7 @@
     below_settled: '累计额度不能小于已经记账的累计额度',
     already_reached: '这个额度在上一个结算点就已经达到了（上次结转的部分就够了）',
     empty_period: '这段时间没有需要结算的额度',
-    bad_time: '时间不对：要在上一个结算点之后、现在前 2 分钟之前',
+    bad_time: '时间不对：要在上一个结算点之后、现在前 1 小时之前（「用量统计」里长请求会晚到，1 小时前的数才完整）',
     up_start_locked: '已经有结算点了，起点不能再改',
     too_many_jobs: '后台任务太多，请稍后再试',
     job_not_found: '任务已过期，请重试',
@@ -2115,7 +2115,8 @@
       h('div', { class: 'card-head' }, h('h3', { class: 'card-title' }, icon('trend'), '回本进度'), h('span', { class: 'faint xs', text: '成员名下号的成本（开号 + 每月续费）回本前，收入全归成员、不分成' })),
       h('div', { class: 'table-wrap' }, h('table', { class: 'table responsive' }, h('thead', {}, h('tr', {}, ['成员', '进度', '成本合计', '已回本', '本期预估回本', '还差', ''].map((t) => h('th', { text: t })))), tbody)));
   }
-  // 账号 + 各自的结算区间
+  // 账号 + 各自的结算区间。额度来源：counter = 卡片“今日”读数相减（请求跑完的时刻记，和网页一致）；slices = 「用量统计」查询（读数覆盖不到的时段）
+  const ITEM_SRC = { counter: '按卡片读数（请求跑完的时刻记，和网页上的“今日”一致；跨过结算点的长请求不漏不重）', slices: '按「用量统计」（这段时间没有卡片读数；按请求开始的时刻记，截止时还在跑的请求不在里面）' };
   function windowsTable(items, info) {
     if (!items.length) return h('div', { class: 'muted small', text: '没有账号额度（只有调整项）' });
     return h('div', { class: 'charges-wrap' }, h('table', { class: 'mini-table win-table' },
@@ -2125,7 +2126,7 @@
         const range = s ? [h('div', { text: fmtSec(s) }), h('div', { class: 'faint', text: '→ ' + fmtSec(e) })] : '—';
         return h('tr', {}, h('td', {}, acctLabel(i.account_key || i.key, info, i.name), s ? h('div', { class: 'm-only faint xs', text: `${fmtSec(s).slice(5)} → ${fmtSec(e).slice(5)}` }) : null),
           h('td', { class: 'small nowrap c-range' }, range),
-          h('td', { class: 'num', title: usd4(i.usd) }, usd(i.usd)), h('td', { class: 'num' }, compact(i.requests)), h('td', { class: 'num c-tok' }, compact(i.tokens)));
+          h('td', { class: 'num', title: usd4(i.usd) + (ITEM_SRC[i.src] ? '\n' + ITEM_SRC[i.src] : '') }, usd(i.usd), i.src === 'slices' ? h('div', { class: 'faint xs', text: '用量统计' }) : null), h('td', { class: 'num' }, compact(i.requests)), h('td', { class: 'num c-tok' }, compact(i.tokens)));
       }))));
   }
 
@@ -2166,7 +2167,7 @@
     });
     const head = h('div', { class: 'card', style: { marginBottom: '16px' } }, h('div', { class: 'card-body period' },
       h('div', {}, howTo('怎么结算',
-        h('div', { class: 'hint', text: `点某位成员的“结算”，系统会向 Polo 精确查询他名下每个号从上次结算点到点击时间前 ${Math.round(st.cutoff_lag / 60)} 分钟的额度，算出应付多少人民币（可换成 USDT）；确认后自动写入结算点，下次从下一秒接着算。一天可以结算多次，不会重复、不会漏。` })),
+        h('div', { class: 'hint', text: `点某位成员的“结算”，系统会算出他名下每个号从上次结算点到点击时间前 ${Math.round(st.cutoff_lag / 60)} 分钟的额度：用 Polo 卡片上“今日”的读数相减（每 30 秒记一次，按请求跑完的时刻记，和网页上的数一致），没有读数的时段再向 Polo「用量统计」查。算出应付多少人民币（可换成 USDT）；确认后自动写入结算点，下次从下一秒接着算。一天可以结算多次，不会重复、不会漏（结算时还在跑的长请求，跑完后算在下一次）。` })),
         h('div', { class: 'faint xs', style: { marginTop: '4px' }, text: st.pending ? `卡片上的金额是预估（${ago(st.pending.at)}查询，每 15 分钟自动更新）${st.refreshing ? '，正在更新…' : ''}` : '预估生成中…' })),
       h('div', { class: 'toolbar' }, refreshBtn)));
     const grid = ms.length ? h('div', { class: 'mgrid' }, ms.map((m, i) => { const c = memberCard(m, st, info, unpaidBy[m.user_id], rate, reload); c.style.animationDelay = i * 40 + 'ms'; return c; }))
@@ -2243,11 +2244,11 @@
     async function run() {
       const my = ++seq;
       res = null;
-      const status = h('div', { class: 'loading-box' }, icon('refresh', 'icon spin'), h('span', { text: `正在向 Polo 精确查询 ${who} 的额度…` }));
+      const status = h('div', { class: 'loading-box' }, icon('refresh', 'icon spin'), h('span', { text: `正在算 ${who} 的额度…` }));
       clear(box, status);
       try {
         const r = await api('POST', '/admin/settle/preview', until ? { user_id: m.user_id, until } : { user_id: m.user_id });
-        const out = await pollJob(r.job_id, (s, sec) => { status.lastChild.textContent = (s === 'queued' ? '排队中' : `正在向 Polo 精确查询 ${who} 的额度`) + `… ${sec} 秒`; });
+        const out = await pollJob(r.job_id, (s, sec) => { status.lastChild.textContent = (s === 'queued' ? '排队中' : `正在算 ${who} 的额度（没有卡片读数的时段要查 Polo）`) + `… ${sec} 秒`; });
         if (my !== seq) return;
         jobId = r.job_id; res = out;
         const L = res.line;
@@ -2509,7 +2510,7 @@
       const cTxt = Math.abs(carry) >= 0.00005 ? (carry > 0 ? `；上次多出的 ${usd4(carry)} 会先抵掉` : `；上次少的 ${usd4(-carry)} 会先补上`) : '';
       const hint = mode === 'amount' ? `从 ${fmtSec(st.next_start)} 开始累计${cTxt}。目前待结算 ${p ? usd(pTot) : '—'}（截至 ${p ? fmtSec(p.end) : '—'}）。记账就写你填的数。`
         : mode === 'cumulative' ? `从 ${fmtSec(set.up_start)} 起的累计额度。已记账 ${usd4(sd.usd)}，目前累计约 ${usd(sd.polo_usd + (p ? p.usd : 0))}。记账 = 你填的数 − 已记账。`
-          : `在 ${fmtSec(st.next_start)} 之后、现在前 2 分钟之前（北京时间，精确到秒）。记账 = 这段 Polo 实际额度${Math.abs(carry) >= 0.00005 ? ' + 上次结转' : ''}。`;
+          : `在 ${fmtSec(st.next_start)} 之后、现在前 1 小时之前（北京时间，精确到秒；「用量统计」里长请求会晚到，1 小时前的数才完整）。记账 = 这段 Polo 实际额度${Math.abs(carry) >= 0.00005 ? ' + 上次结转' : ''}。`;
       const label = mode === 'amount' ? '上家这次结算了多少额度（美元）' : mode === 'cumulative' ? '上家累计结算到多少额度（美元）' : '结算到哪个时间';
       clear(inputBox, field(label, h('div', { class: 'row', style: { gap: '8px' } }, mode === 'amount' ? amt : mode === 'cumulative' ? cum : tIn, findBtn), hint));
     }
