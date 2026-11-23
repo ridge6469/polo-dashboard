@@ -953,3 +953,37 @@ tr:hover .nick-btn { opacity: 1; }
   .qw-row.on { background: var(--primary-soft); }
   .qw-row.on td { background: transparent; }
 }
+/* v35 额度两行：第一行 标签 · 进度条 · % · 剩余时间；第二行 本窗口已跑 · 用满预测 · 重置时间（放不下就换行，不会压在一起） */
+.qrows { display: flex; flex-direction: column; align-items: stretch; gap: 8px; min-width: 230px; }
+.qr { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.qr-top { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.qr-top .q-k { flex: 0 0 auto; min-width: 28px; }
+.qr-top .q-track { flex: 1 1 60px; min-width: 36px; }
+.qr-top .q-pct { flex: 0 0 auto; min-width: 34px; }
+.qr-top .q-left { flex: 0 0 auto; min-width: 42px; }
+.qr-top .q-note { flex: 1 1 auto; min-width: 0; }
+.qr-sub, .u-sub { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; min-width: 0; }
+.qr-sub { padding-left: 36px; }
+.q-usd, .u-usd { display: inline-flex; align-items: baseline; gap: 3px; min-width: 0; font-size: 12px; text-align: left; }
+.q-usd b, .u-usd b { font-weight: 750; }
+.qb-unit { font-size: 10.5px; font-weight: 500; color: var(--faint); }
+.qb-full b { color: var(--text-2); }
+.qb-full.guess b { color: var(--faint); font-weight: 600; }
+.qb-full.done b { color: var(--bad); }
+.u-q { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.u-sub { padding-left: 60px; }
+.u-sub .u-reset { margin-left: auto; }
+.acard .u-reset { min-width: 0; }
+.qw-full { font-size: 12px; font-weight: 650; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.qw-full.guess { color: var(--faint); font-weight: 500; }
+.qw-kpis { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.qc-card { margin-top: 16px; }
+.qc-sum { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; font-size: 13px; line-height: 1.6; color: var(--text-2); }
+.qc-sum p { margin: 0; }
+.qc-table td.num, .qc-table th:nth-child(n+2) { text-align: right; }
+@media (max-width: 1100px) { .qw-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 760px) {
+  .qrows { min-width: 0; width: 100%; }
+  .qw-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .qc-table td.num { text-align: left; }
+}
