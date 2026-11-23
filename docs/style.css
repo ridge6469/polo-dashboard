@@ -918,3 +918,38 @@ tr:hover .nick-btn { opacity: 1; }
   .lrow .rt-box .rt-num { display: none; }
   .lrow .rt-box { padding-left: 9px; }
 }
+/* 额度窗口：看板里 5h / 7d 条后面的“本窗口已跑 $” + 额度窗口页 */
+.qrows { grid-template-columns: 42px minmax(64px, 1fr) 40px 58px 48px; min-width: 272px; }
+.q-usd, .u-usd { font-size: 12px; font-weight: 750; text-align: right; color: var(--primary-text); text-decoration: none; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.q-usd:hover, .u-usd:hover { text-decoration: underline; }
+.q-usd.partial, .u-usd.partial { color: var(--warn); }
+.q-usd.wait, .u-usd.wait { color: var(--faint); }
+.u-usd { font-size: 11.5px; min-width: 42px; flex-shrink: 0; }
+.acard .u-reset { min-width: 90px; }
+.qw-row { cursor: pointer; }
+@media (hover: hover) { .qw-row:hover td { background: var(--surface-2); } }
+.qw-row.on td { background: var(--primary-soft); }
+.qw-name { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.qw-name .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; }
+.qw-cur { display: flex; flex-direction: column; gap: 2px; }
+.qw-usd { font-size: 15px; font-weight: 750; font-variant-numeric: tabular-nums; color: var(--text); }
+.qw-usd.partial { color: var(--warn); }
+.qw-spark { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.qw-pick { gap: 8px; }
+.qw-sel { width: auto; max-width: 340px; }
+.qw-kpis { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
+.qw-kpi { display: flex; flex-direction: column; gap: 3px; padding: 10px 12px; border-radius: 12px; background: var(--surface-2); border: 1px solid var(--border); min-width: 0; }
+.qw-kpi b { font-size: 17px; font-weight: 750; font-variant-numeric: tabular-nums; color: var(--text); }
+.qw-table td.num, .qw-table th:nth-child(n+2):not(:nth-child(6)):not(:nth-child(8)) { text-align: right; }
+.qw-table tr.qw-live td { background: rgba(59, 130, 246, .035); }
+@media (max-width: 1100px) { .qw-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 760px) {
+  .qrows { min-width: 0; }
+  .qw-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .qw-pick { width: 100%; }
+  .qw-sel { max-width: none; flex: 1 1 100%; }
+  .qw-table td.num { text-align: left; }
+  .qw-name .mono { max-width: 100%; }
+  .qw-row.on { background: var(--primary-soft); }
+  .qw-row.on td { background: transparent; }
+}

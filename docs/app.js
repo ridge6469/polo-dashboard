@@ -360,6 +360,7 @@
     switch (path) {
       case '/dashboard': return pageDashboard();
       case '/archived': return pageArchived();
+      case '/windows': return pageWindows(params);
       case '/earnings': return pageEarnings();
       case '/admin/settle': return pageSettle(params);
       case '/admin/stats': return pageStats();
@@ -512,6 +513,7 @@
       h('div', { class: 'side-section', text: '概览' }),
       link('#/dashboard', 'chart', '用量看板'),
       link('#/archived', 'archive', '已归档'),
+      link('#/windows', 'clock', '额度窗口'),
       isAdmin() ? link('#/admin/stats', 'trend', '统计看板') : null,
       !isAdmin() ? link('#/earnings', 'dollar', '我的收益') : null,
       isAdmin() ? [
@@ -643,7 +645,7 @@
       if (typeof q.used_pct === 'number') {
         const p = q.used_pct, lv = p >= 90 ? 'bad' : p >= 75 ? 'warn' : 'ok';
         const fill = h('div', { class: 'u-fill uf-' + lv }); fill.style.width = Math.min(100, Math.max(0, p)) + '%';
-        append(row, h('div', { class: 'u-track' }, fill), h('span', { class: 'u-pct ' + (lv === 'ok' ? '' : lv), text: pct(p) }), resetEl(q, d.windows && d.windows[k] && d.windows[k].reset_text) || h('span', { class: 'u-reset' }));
+        append(row, h('div', { class: 'u-track' }, fill), h('span', { class: 'u-pct ' + (lv === 'ok' ? '' : lv), text: pct(p) }), QW_KINDS.includes(k) ? qwCell(r, k, 'u-usd') : null, resetEl(q, d.windows && d.windows[k] && d.windows[k].reset_text) || h('span', { class: 'u-reset' }));
       } else if (q.status) {
         row.append(h('span', { class: 'badge b-warn plain', text: q.status }));
       } else row.append(h('span', { class: 'faint small', text: '未读取到' }));
@@ -747,6 +749,36 @@
     return head + (left ? ` · ${left}后恢复` : '');
   }
   const coolTitle = (c) => (c ? `Polo 冷却原因：${c.reason}${c.until ? `\n预计恢复：${fmtTime(c.until)}（按 Polo 显示的剩余时间算，精确到分钟）` : ''}` : '');
+  // ---------- 额度窗口：每个号当前 5h / 7d 窗口里跑了多少额度（所有模型合计，和结算同一个数） ----------
+  const QW_KINDS = ['5h', '7d'];
+  const qwKey = (r) => String(r.account_key || r.email || '').toLowerCase();
+  function qwOf(r, k) {
+    const a = S.qw && S.qw.accounts && S.qw.accounts[qwKey(r)];
+    const w = a && a[k];
+    return w && w.end * 1000 > Date.now() ? w : null;
+  }
+  const usdS = (v) => (v === null || v === undefined || isNaN(v) ? '—' : '$' + (Math.abs(v) >= 1000 ? Math.round(v).toLocaleString('en-US') : Math.abs(v) >= 100 ? v.toFixed(0) : v.toFixed(Math.abs(v) >= 10 ? 1 : 2)));
+  const QW_STATE = { final: '已结束 · 精确值', ended: '已结束 · 结束 10 分钟后出精确值', live: '进行中 · 每 10 分钟累计一次', pending: '刚发现，正在统计起点以来的额度' };
+  // 按结束时（或现在）的用量 % 推算：这个窗口打满 100% 大约对应多少额度
+  const qwFull = (w) => (w && typeof w.usd === 'number' && typeof w.last_pct === 'number' && w.last_pct >= 5 ? (w.usd * 100) / w.last_pct : null);
+  function qwTitle(w, kind) {
+    if (!w) return `这个号现在没有进行中的 ${kind} 窗口`;
+    return [`${kind} 窗口 ${fmtShort(w.start)} – ${fmtShort(w.end)}（按重置时间推算）`,
+      typeof w.usd === 'number' ? `已跑 ${usd4(w.usd)}（所有模型合计）· ${compact(w.requests)} 次请求 · ${compact(w.tokens)} tokens` : '正在统计起点以来跑了多少额度…',
+      w.state === 'live' && w.usd_at ? `算到 ${fmtTime(w.usd_at, false)}（每 10 分钟累计一次，窗口结束后再精确统计）` : QW_STATE[w.state] || '',
+      w.missing ? `有 ${w.missing} 段 10 分钟没查到，数字偏小；窗口结束后会精确统计` : '',
+      '点击看每个窗口的历史'].filter(Boolean).join('\n');
+  }
+  const qwLink = (key, kind) => '#/windows?key=' + encodeURIComponent(key) + '&kind=' + kind;
+  function qwCell(r, kind, cls) {
+    const w = qwOf(r, kind);
+    if (!w) return h('span', { class: cls + ' none' });
+    return h('a', { class: cls + (w.missing ? ' partial' : '') + (typeof w.usd === 'number' ? '' : ' wait'), href: qwLink(qwKey(r), kind), title: qwTitle(w, kind),
+      onclick: (e) => e.stopPropagation(), text: typeof w.usd === 'number' ? usdS(w.usd) : '…' });
+  }
+  async function loadQw() {
+    try { S.qw = await api('GET', '/me/windows/current'); S.qwAt = Date.now(); } catch { /* 拿不到就不显示 */ }
+  }
   function liveNums(r) {
     const d = r.detail || {}, hl = r.health || {}, rt = d.realtime || {}, live = liveOf(r);
     const has = (x) => x !== null && x !== undefined && x !== '';
@@ -831,7 +863,8 @@
         const left = q.reset_at ? leftShort(q.reset_at) : null;
         const pend = left === '待刷新' && p > 0;
         append(box, label, h('div', { class: 'q-track' }, fill), h('span', { class: 'q-pct ' + (lv === 'ok' ? '' : lv), title: q.by_cool ? coolTitle(r.cool) : null, text: pct(p) }),
-          h('span', { class: 'q-left mono' + (pend ? ' text-warn' : '') + (q.by_cool ? ' text-bad' : ''), title: q.by_cool ? coolTitle(r.cool) : q.reset_at ? '重置于 ' + fmtTime(q.reset_at) : '重置时间未知', text: left && (left !== '待刷新' || pend) ? left : (left === '待刷新' ? '已重置' : '—') }));
+          h('span', { class: 'q-left mono' + (pend ? ' text-warn' : '') + (q.by_cool ? ' text-bad' : ''), title: q.by_cool ? coolTitle(r.cool) : q.reset_at ? '重置于 ' + fmtTime(q.reset_at) : '重置时间未知', text: left && (left !== '待刷新' || pend) ? left : (left === '待刷新' ? '已重置' : '—') }),
+          QW_KINDS.includes(k) ? qwCell(r, k, 'q-usd') : h('span', { class: 'q-usd none' }));
       } else {
         append(box, label, h('span', { class: 'q-note', text: q.status || '未返回独立额度' }));
       }
@@ -1259,7 +1292,9 @@
       refreshBtn.disabled = true; clear(refreshBtn, icon('refresh', 'icon icon-sm spin'), '刷新中');
       try {
         const keys = admin ? Object.keys(ADMIN_RESOURCES) : ['accounts', 'archived', 'realtime'];
+        const qwP = loadQw();
         const settled = await Promise.allSettled(keys.map((k) => api('GET', ADMIN_RESOURCES[k])));
+        await qwP;
         if (!S.token) return;
         if (settled.every((x) => x.status === 'rejected')) {
           const e = settled[0].reason;
@@ -1278,6 +1313,7 @@
     S.timers.push(setInterval(async () => {
       if (document.hidden || !S.dash) return;
       try { S.dash.realtime = await api('GET', ADMIN_RESOURCES.realtime); } catch { /* 保留上一次的 */ }
+      if (Date.now() - (S.qwAt || 0) > 120000) await loadQw();
       whenIdle(() => { if (!listBox.isConnected) return; drawRt(); drawTable(); if (!admin) drawStats(); });
     }, 30000));
     if (S.dash) { drawNotices(); drawRt(); drawStats(); drawTable(); drawOps(); }
@@ -1378,6 +1414,188 @@
       } finally { refresh.disabled = false; }
     }
     load();
+  }
+
+  // ============================================================
+  // 额度窗口：每个号每个 5h / 7d 窗口里跑了多少额度（所有模型合计）
+  // ============================================================
+  async function pageWindows(params) {
+    const { main } = appLayout({ active: '#/windows', title: '额度窗口', desc: '每个号每个 5h / 7d 额度窗口里跑了多少额度（所有模型合计）' });
+    const pk = params.get('kind');
+    let kind = pk === '5h' || pk === '7d' ? pk : (localStorage.getItem('polo_qw_kind') === '7d' ? '7d' : '5h');
+    let key = (params.get('key') || localStorage.getItem('polo_qw_key') || '').toLowerCase();
+    let ov = null, hist = null, names = {}, order = [], shown = 30, seq = 0, chart = null;
+    const since = h('span'), err = h('div');
+    const help = h('div', { class: 'card', style: { marginBottom: '16px' } }, h('div', { class: 'card-body' }, howTo('怎么算的',
+      h('div', { class: 'hint', text: '窗口：每 10 分钟读一次每个号 5h / 7d 的“X 后重置”，重置时间往前推 5 小时 / 7 天就是窗口起点（多算 10 分钟以防取整，但不早于上一个窗口的结束；两个窗口之间没有用量，多算不会算进别的窗口）。' }),
+      h('div', { class: 'hint', text: '额度：和结算用的同一个数——Polo「用量统计」的成本，所有模型加在一起。进行中的窗口每 10 分钟累计一次；窗口结束 10 分钟后按起止时间精确查一次。' }),
+      h('div', { class: 'hint', text: '≈ 打满额度：已跑额度 ÷ 结束时的用量 %，估算这个窗口打满 100% 大约能跑多少额度，用来看额度上限有没有变（用量低于 5% 时不估）。' }),
+      h('div', { class: 'faint xs', style: { marginTop: '4px' } }, since))));
+    const ovBody = h('tbody');
+    const ovCard = h('div', { class: 'card', style: { marginBottom: '16px' } },
+      h('div', { class: 'card-head' }, h('h3', { class: 'card-title' }, icon('server'), '全部账号', h('span', { class: 'faint xs', style: { fontWeight: 400 }, text: '点一行看这个号每个窗口的明细' }))),
+      h('div', { class: 'table-wrap' }, h('table', { class: 'table responsive qw-ov' },
+        h('thead', {}, h('tr', {}, ['账号', '当前 5h 窗口', '当前 7d 窗口', '最近的 5h 窗口', '上一个 7d 窗口'].map((x) => h('th', { text: x })))), ovBody)));
+    const sel = h('select', { class: 'select select-sm qw-sel', 'aria-label': '选择账号' });
+    const seg = h('div', { class: 'seg' });
+    const kpis = h('div', { class: 'qw-kpis' });
+    const chartEl = h('div', { class: 'chart' });
+    const tbody = h('tbody');
+    const moreBtn = h('button', { class: 'btn btn-ghost btn-sm', type: 'button', hidden: true, onclick: () => { shown += 50; drawTable(); } }, '显示更多');
+    const detail = h('div', { class: 'card qw-detail' },
+      h('div', { class: 'card-head' }, h('h3', { class: 'card-title' }, icon('trend'), '每个窗口'), h('div', { class: 'row wrap qw-pick' }, sel, seg)),
+      h('div', { class: 'card-body' }, kpis, chartEl),
+      h('div', { class: 'table-wrap' }, h('table', { class: 'table responsive qw-table' },
+        h('thead', {}, h('tr', {}, ['窗口', '已跑额度', '请求', 'Token', '其中 Opus / Fable', '用量 %', '≈ 打满额度', '状态'].map((x) => h('th', { text: x })))), tbody)),
+      h('div', { style: { textAlign: 'center', padding: '8px' } }, moreBtn));
+    append(main, help, err, ovCard, detail);
+
+    const nm = (k) => (names[k] && names[k].name) || keyText(k);
+    const sub = (k) => (names[k] && names[k].email) || '';
+    const keysOf = () => { const a = (ov && ov.accounts) || {}; return [...order.filter((k) => a[k]), ...Object.keys(a).filter((k) => !order.includes(k)).sort()]; };
+    const stateText = (w) => (w.state === 'final' ? '已结束 · 精确' : w.state === 'ended' ? '已结束 · 精确统计中' : w.state === 'live' ? '进行中' + (w.missing ? ` · 缺 ${w.missing} 段` : '') : '统计中');
+    const span = (w) => { const s = fmtShort(w.start), e = fmtShort(w.end); return s.slice(0, 5) === e.slice(0, 5) ? `${s} → ${e.slice(6)}` : `${s} → ${e}`; };
+    const has = (w) => typeof w.usd === 'number';
+    function cur(w, kd) {
+      if (!w) return h('span', { class: 'faint', text: '—' });
+      const left = until(w.end);
+      return h('div', { class: 'qw-cur', title: qwTitle(w, kd) },
+        h('b', { class: 'qw-usd' + (w.missing ? ' partial' : ''), text: has(w) ? usd(w.usd) : '统计中' }),
+        h('span', { class: 'faint xs', text: [typeof w.last_pct === 'number' ? '已用 ' + pct(w.last_pct) : null, left ? left + '后重置' : null].filter(Boolean).join(' · ') }));
+    }
+    function drawOv() {
+      const accts = (ov && ov.accounts) || {}, keys = keysOf();
+      if (!keys.length) { clear(ovBody, h('tr', {}, h('td', { colspan: '5' }, emptyState('还没有窗口数据：服务器正在记录，第一批数字几分钟后出现', 'clock')))); return; }
+      clear(ovBody, keys.map((k) => {
+        const a = accts[k], r5 = (a.recent['5h'] || []).filter(has), r7 = (a.recent['7d'] || []).filter(has);
+        const avg = r5.length ? r5.reduce((s, w) => s + w.usd, 0) / r5.length : null, last7 = r7.length ? r7[r7.length - 1] : null;
+        return h('tr', { class: 'qw-row' + (k === key ? ' on' : ''), onclick: () => pick(k, null, true) },
+          h('td', { 'data-label': '' }, h('div', { class: 'qw-name' }, h('b', { text: nm(k) }), sub(k) && sub(k) !== nm(k) ? h('span', { class: 'faint xs mono', text: sub(k) }) : null)),
+          h('td', { 'data-label': '当前 5h 窗口' }, cur(a.current['5h'], '5h')),
+          h('td', { 'data-label': '当前 7d 窗口' }, cur(a.current['7d'], '7d')),
+          h('td', { 'data-label': '最近的 5h 窗口' }, r5.length ? h('div', { class: 'qw-spark', title: r5.map((w) => `${fmtShort(w.start)}  ${usd(w.usd)}`).join('\n') }, r5.length > 1 ? sparkline(r5.map((w) => w.usd)) : null,
+            h('span', { class: 'faint xs', text: `${r5.length} 个 · 平均 ${usd(avg)}` })) : h('span', { class: 'faint xs', text: '还没有结束的' })),
+          h('td', { 'data-label': '上一个 7d 窗口' }, last7 ? h('div', { class: 'qw-cur' }, h('b', { class: 'qw-usd', text: usd(last7.usd) }),
+            h('span', { class: 'faint xs', text: [typeof last7.last_pct === 'number' ? '已用 ' + pct(last7.last_pct) : null, last7.rejected_at ? '打满' : null].filter(Boolean).join(' · ') })) : h('span', { class: 'faint xs', text: '还没有结束的' })));
+      }));
+    }
+    function paintPick() {
+      clear(sel, keysOf().map((k) => h('option', { value: k, selected: k === key, text: nm(k) + (sub(k) && sub(k) !== nm(k) ? ' · ' + sub(k) : '') })));
+      clear(seg, QW_KINDS.map((kd) => h('button', { type: 'button', class: kd === kind ? 'on' : '', onclick: () => pick(null, kd), text: kd + ' 窗口' })));
+    }
+    sel.addEventListener('change', () => pick(sel.value));
+    function pick(k, kd, scroll) {
+      const keyChanged = k && k !== key;
+      if (k) key = k;
+      if (kd) kind = kd;
+      localStorage.setItem('polo_qw_key', key); localStorage.setItem('polo_qw_kind', kind);
+      history.replaceState(null, '', qwLink(key, kind));
+      drawOv(); paintPick();
+      if (keyChanged) { shown = 30; loadHist(); } else { shown = 30; drawDetail(); }
+      if (scroll) detail.scrollIntoView({ behavior: reduceMotion() ? 'auto' : 'smooth', block: 'start' });
+    }
+    const list = () => (hist && hist.key === key && hist.windows && hist.windows[kind]) || [];
+    const kpi = (label, value, note) => h('div', { class: 'qw-kpi' }, h('span', { class: 'faint xs', text: label }), h('b', { text: value }), note ? h('span', { class: 'faint xs', text: note }) : null);
+    function drawDetail() {
+      const ws = list(), done = ws.filter((w) => (w.state === 'final' || w.state === 'ended') && has(w));
+      const fulls = done.map(qwFull).filter((x) => x !== null).sort((a, b) => a - b);
+      const med = fulls.length ? (fulls.length % 2 ? fulls[(fulls.length - 1) / 2] : (fulls[fulls.length / 2 - 1] + fulls[fulls.length / 2]) / 2) : null;
+      const maxW = done.reduce((m, w) => (!m || w.usd > m.usd ? w : m), null), avg = done.length ? done.reduce((s, w) => s + w.usd, 0) / done.length : null;
+      clear(kpis, kpi('已结束的窗口', `${done.length} 个`, ws.length > done.length ? `另有 ${ws.length - done.length} 个进行中` : ''),
+        kpi('平均每个窗口', avg !== null ? usd(avg) : '—'),
+        kpi('最多的一个', maxW ? usd(maxW.usd) : '—', maxW ? fmtShort(maxW.start) + ' 开始' : ''),
+        kpi('打满（被拒）', `${done.filter((w) => w.rejected_at).length} 次`),
+        kpi('≈ 打满额度', med !== null ? usd(med) : '—', fulls.length ? `${fulls.length} 个窗口的中位数` : '用量 % 够高的窗口结束后才有'));
+      drawChart(); drawTable();
+    }
+    const tipRow = (k, v) => `<div class="ct-row"><span>${escHtml(k)}</span><b>${escHtml(v)}</b></div>`;
+    const tipHtml = (w) => `<div class="ct-title">${escHtml(span(w))}</div>` + tipRow('已跑额度', has(w) ? usd4(w.usd) : '统计中') +
+      tipRow('请求', compact(w.requests)) + tipRow('Token', compact(w.tokens)) + tipRow('用量 %', typeof w.last_pct === 'number' ? pct(w.last_pct) : '—') +
+      (qwFull(w) ? tipRow('≈ 打满额度', usd(qwFull(w))) : '') + (w.rejected_at ? tipRow('打满', '被拒') : '') + `<div class="ct-more">${escHtml(stateText(w))}</div>`;
+    async function drawChart() {
+      const ws = list().slice().reverse();
+      if (!ws.length) {
+        if (chart) { chart.dispose(); S.charts = S.charts.filter((x) => x !== chart); chart = null; }
+        clear(chartEl, emptyState(key ? `这个号还没有 ${kind} 窗口的记录` : '先选一个账号', 'clock'));
+        return;
+      }
+      try { await loadECharts(); } catch (e) { clear(chartEl, emptyState(errText(e), 'warning')); return; }
+      if (!chartEl.isConnected) return;
+      if (!chart || chart.isDisposed()) { clear(chartEl); chart = mkChart(chartEl); }
+      const E = window.echarts, t = chartTheme(), b = baseOpt(t), n = ws.length, zoom = n > 30;
+      chart.setOption(Object.assign(b, {
+        grid: { left: 8, right: 8, top: 40, bottom: zoom ? 42 : 6, containLabel: true },
+        legend: Object.assign(b.legend, { data: ['已跑额度', '用量 %'] }),
+        tooltip: Object.assign(b.tooltip, { formatter: (ps) => tipHtml(ws[(Array.isArray(ps) ? ps[0] : ps).dataIndex]) }),
+        xAxis: axisX(t, ws.map((w) => fmtShort(w.start)), { axisLabel: { color: t.muted, fontSize: 11, hideOverlap: true } }),
+        yAxis: [axisY(t, shortUsd), axisY(t, (v) => v + '%', { min: 0, max: 100, splitLine: { show: false } })],
+        dataZoom: zoom ? [{ type: 'inside', startValue: n - 30, endValue: n - 1 }, { type: 'slider', height: 18, bottom: 8, startValue: n - 30, endValue: n - 1, borderColor: t.border, textStyle: { color: t.muted } }] : [],
+        series: [
+          { name: '已跑额度', type: 'bar', barMaxWidth: 34, data: ws.map((w) => ({ value: has(w) ? w.usd : 0,
+            itemStyle: { borderRadius: [5, 5, 0, 0], color: w.rejected_at ? grad(E, '#f87171', '#dc2626') : w.state === 'final' ? grad(E, '#60a5fa', '#6366f1') : grad(E, 'rgba(96,165,250,.5)', 'rgba(99,102,241,.4)') } })) },
+          { name: '用量 %', type: 'line', yAxisIndex: 1, smooth: true, symbolSize: 6, connectNulls: true, data: ws.map((w) => (typeof w.last_pct === 'number' ? w.last_pct : null)),
+            lineStyle: { width: 2, color: '#f59e0b' }, itemStyle: { color: '#f59e0b' } },
+        ],
+      }), true);
+    }
+    function drawTable() {
+      const ws = list();
+      if (!ws.length) { clear(tbody, h('tr', {}, h('td', { colspan: '8' }, emptyState(key ? '还没有记录' : '先选一个账号', 'clock')))); moreBtn.hidden = true; return; }
+      clear(tbody, ws.slice(0, shown).map((w) => {
+        const full = qwFull(w);
+        return h('tr', { class: w.state === 'final' ? '' : 'qw-live' },
+          h('td', { 'data-label': '窗口' }, h('div', { class: 'mono small', text: span(w) }),
+            w.end_src === 'early' ? h('div', { class: 'faint xs', text: 'Polo 提前重置' }) : w.end_src === 'cooldown' ? h('div', { class: 'faint xs', text: '结束时间按冷却原因' }) : null),
+          h('td', { 'data-label': '已跑额度' }, h('b', { class: 'qw-usd' + (w.missing ? ' partial' : ''), title: w.missing ? `有 ${w.missing} 段 10 分钟没查到，数字偏小；窗口结束后会精确统计` : '', text: has(w) ? usd(w.usd) : '统计中' })),
+          h('td', { 'data-label': '请求', class: 'num', text: compact(w.requests) }),
+          h('td', { 'data-label': 'Token', class: 'num', text: compact(w.tokens) }),
+          h('td', { 'data-label': '其中 Opus / Fable', class: 'num faint', text: has(w) ? `${usd(w.opus)} / ${usd(w.fable)}` : '—' }),
+          h('td', { 'data-label': '用量 %' }, h('div', { class: 'row', style: { gap: '6px', flexWrap: 'wrap' } },
+            typeof w.last_pct === 'number' ? h('span', { class: w.last_pct >= 90 ? 'text-bad' : w.last_pct >= 75 ? 'text-warn' : '', text: pct(w.last_pct) + (w.peak_pct && w.peak_pct !== w.last_pct ? `（最高 ${pct(w.peak_pct)}）` : '') }) : h('span', { class: 'faint', text: '—' }),
+            w.rejected_at ? h('span', { class: 'chip chip-warn', title: '这个窗口被 Anthropic 拒过（额度已满）', text: '打满' }) : null)),
+          h('td', { 'data-label': '≈ 打满额度', class: 'num', title: full ? `已跑 ${usd(w.usd)} ÷ 用量 ${pct(w.last_pct)}` : '用量低于 5% 不估', text: full ? usd(full) : '—' }),
+          h('td', { 'data-label': '状态' }, h('span', { class: 'badge ' + (w.state === 'final' ? 'b-ok' : w.state === 'live' ? 'b-blue' : 'b-gray'), title: w.state === 'live' && w.usd_at ? `算到 ${fmtTime(w.usd_at, false)}` : '', text: stateText(w) })));
+      }));
+      moreBtn.hidden = ws.length <= shown;
+    }
+    async function loadHist() {
+      if (!key) { hist = null; drawDetail(); return; }
+      const my = ++seq;
+      try {
+        const r = await api('GET', '/me/windows/history/' + encodeURIComponent(key));
+        if (my !== seq || !detail.isConnected) return;
+        hist = r;
+      } catch (e) {
+        if (my !== seq) return;
+        hist = null; clear(kpis, emptyState(errText(e), 'warning'));
+      }
+      drawDetail();
+    }
+    async function load(again) {
+      try {
+        const [acc, o] = await Promise.all([again ? null : api('GET', '/v1/accounts').catch(() => null), api('GET', '/me/windows/overview')]);
+        if (!detail.isConnected) return;
+        if (acc) {
+          const rows = (acc.data && acc.data.rows) || [];
+          order = rows.map(qwKey).filter(Boolean);
+          names = Object.fromEntries(rows.map((r) => [qwKey(r), { name: r.display_name || r.email, email: r.email }]));
+        }
+        ov = o;
+        clear(err);
+        since.textContent = `从 ${fmtTime(ov.since)} 开始记录（之前的窗口没有数据）` + (ov.last_slice_end ? `；进行中的窗口累计到 ${fmtTime(ov.last_slice_end, false)}` : '') + (ov.error ? '；最近一次查询没成功，会自动重试' : '');
+        const ks = keysOf();
+        if (!ks.includes(key)) key = ks[0] || '';
+        drawOv(); paintPick();
+        await loadHist();
+      } catch (e) {
+        clear(err, h('div', { class: 'notice n-warn' }, icon('warning'), h('span', { text: errText(e) })));
+        if (!ov) { clear(ovBody, h('tr', {}, h('td', { colspan: '5' }, emptyState(errText(e), 'warning')))); }
+      }
+    }
+    clear(ovBody, h('tr', {}, h('td', { colspan: '5' }, h('div', { class: 'skeleton sk-line', style: { width: '60%', margin: '18px auto' } }))));
+    S.onTheme = () => drawChart();
+    S.timers.push(setInterval(() => { if (!document.hidden) load(true); }, 120000));
+    load(false);
   }
 
   // ============================================================
