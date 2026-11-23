@@ -360,6 +360,7 @@
     switch (path) {
       case '/dashboard': return pageDashboard();
       case '/archived': return pageArchived();
+      case '/pool-trend': return pagePoolTrend();
       case '/windows': return pageWindows(params);
       case '/earnings': return pageEarnings();
       case '/admin/settle': return pageSettle(params);
@@ -513,6 +514,7 @@
       h('div', { class: 'side-section', text: '概览' }),
       link('#/dashboard', 'chart', '用量看板'),
       link('#/archived', 'archive', '已归档'),
+      link('#/pool-trend', 'activity', '总池并发走势'),
       link('#/windows', 'clock', '额度窗口'),
       isAdmin() ? link('#/admin/stats', 'trend', '统计看板') : null,
       !isAdmin() ? link('#/earnings', 'dollar', '我的收益') : null,
@@ -1118,6 +1120,63 @@
     return { el: btn, reset: () => { left = sec; paint(); } };
   }
 
+  function pagePoolTrend() {
+    const { main } = appLayout({ active: '#/pool-trend', title: '总池并发走势', desc: '整个号池同时在处理多少个请求 · 北京时间' });
+    let choice = 'today', seq = 0, data = null, chart = null;
+    const dateInput = h('input', { class: 'input input-sm', type: 'date', 'aria-label': '查看日期（北京时间）', style: { width: 'auto' } });
+    const today = h('button', { class: 'btn btn-secondary btn-sm', type: 'button', onclick: () => select('today') }, '今天');
+    const note = h('p', { class: 'hint', role: 'status' });
+    const stats = h('div', { class: 'stats' }), plot = h('div', { style: { height: '280px', width: '100%' }, 'aria-label': '全天每五分钟的平均在飞和峰值' });
+    const days = h('tbody');
+    append(main, h('div', { class: 'card' }, h('div', { class: 'card-head' },
+      h('h2', { class: 'card-title' }, icon('activity'), '每日并发'), h('div', { class: 'toolbar' }, today, dateInput)),
+      h('div', { class: 'card-body' }, stats, note, plot,
+        h('p', { class: 'hint', text: '来自 Polo 的「总池实时并发」，约每 30 秒采样一次。每 5 分钟显示样本平均和最高在飞数；没有读数的时段留空，不算作 0。' }))),
+      h('div', { class: 'card', style: { marginTop: '16px' } }, h('div', { class: 'card-head' }, h('h2', { class: 'card-title' }, icon('log'), '近七天对照')),
+        h('div', { class: 'table-wrap' }, h('table', { class: 'mini-table' }, h('thead', {}, h('tr', {}, ['日期', '平均并发', '采样峰值', '样本数'].map((s) => h('th', { text: s })))), days))));
+    const num = (v) => v == null ? '—' : v.toLocaleString('zh-CN');
+    const hhmm = (s) => new Date((s + 8 * 3600) * 1000).toISOString().slice(11, 16);
+    function draw() {
+      if (!data || !chart || !data.count) return;
+      const theme = chartTheme(), b = baseOpt(theme), d = data;
+      const length = d.day === d.today ? Math.min(288, Math.max(1, Math.floor((d.as_of - d.start) / d.step) + 1)) : 288;
+      const bins = Array(length).fill(null);
+      for (const row of d.buckets) if (row.i < length) bins[row.i] = row;
+      chart.setOption({ ...b, animation: false, color: [PALETTE[0], PALETTE[1]],
+        tooltip: { ...b.tooltip, formatter: (ps) => { const i = ps[0]?.dataIndex, row = bins[i];
+          return i == null ? '' : `${hhmm(d.start + i * d.step)} – ${hhmm(d.start + (i + 1) * d.step)}<br>` +
+            (row ? `平均 ${num(row.avg)} · 峰值 ${num(row.peak)}<br>${row.count} 次采样` : '没有采样'); } },
+        xAxis: axisX(theme, bins.map((_, i) => hhmm(d.start + i * d.step)), { boundaryGap: false }), yAxis: axisY(theme, (v) => num(v), { min: 0, minInterval: 1 }),
+        series: [['avg', '平均并发'], ['peak', '采样峰值']].map(([k, name]) => ({ name, type: 'line', showSymbol: true, symbolSize: 3, connectNulls: false,
+          data: bins.map((r) => r ? r[k] : null) })) }, true);
+    }
+    function select(day) {
+      choice = day; data = null; plot.hidden = true; clear(stats); clear(days); load();
+    }
+    async function load() {
+      const id = ++seq, valid = () => id === seq && main.isConnected;
+      if (!data) note.textContent = '正在读取并发记录…';
+      try {
+        const d = await api('GET', '/me/pool-trend/' + choice);
+        if (!valid()) return;
+        data = d; dateInput.value = d.day; dateInput.max = d.today;
+        const stale = d.day === d.today && d.as_of - d.last_at > 150;
+        clear(stats, statCard(d.day === d.today && !stale ? '最新并发' : '末次并发', num(d.last), 'bolt', 'purple', d.last_at ? hhmm(d.last_at) + ' 采样' : '暂无采样'),
+          statCard('当天平均', num(d.avg), 'activity', 'blue', `${num(d.count)} 次采样`),
+          statCard('当天峰值', num(d.peak), 'trend', 'ok', d.peak_at ? hhmm(d.peak_at) + ' 首次达到' : '暂无采样'));
+        note.textContent = !d.count ? `${d.day} 还没有采样记录。` : stale ? '采样暂未更新，显示最后一次真实读数。' : `${d.day} · 最新样本 ${hhmm(d.last_at)}${choice === 'today' ? ' · 每 30 秒自动更新' : ''}`;
+        clear(days, d.days.length ? d.days.map((r) => h('tr', {}, h('td', {}, h('button', { class: 'btn btn-ghost btn-sm', type: 'button', onclick: () => select(r.day === d.today ? 'today' : r.day) }, r.day)),
+          ...[r.avg, r.peak, r.count].map((v) => h('td', { text: num(v) })))) : h('tr', {}, h('td', { colspan: '4', text: '这七天没有采样记录' })));
+        plot.hidden = !d.count;
+        if (d.count) { await loadECharts(); if (!valid()) return; chart = chart || mkChart(plot); chart.resize(); draw(); }
+      } catch (e) { if (valid()) note.textContent = '读取失败：' + errText(e) + '。可重新选择日期重试。'; }
+    }
+    dateInput.addEventListener('change', () => { if (dateInput.value && dateInput.validity.valid) select(dateInput.value === dateInput.max ? 'today' : dateInput.value); });
+    S.onTheme = draw;
+    S.timers.push(setInterval(() => { if (choice === 'today' && !document.hidden) load(); }, 30000));
+    load();
+  }
+
   async function pageDashboard() {
     const admin = isAdmin();
     const { main } = appLayout({ active: '#/dashboard', title: '用量看板', desc: admin ? '全部账号的额度、用量与重置时间' : '你可以查看的账号额度、用量与重置时间' });
@@ -1169,7 +1228,8 @@
       h('div', { class: 'skeleton sk-line' }), h('div', { class: 'skeleton sk-line' }), h('div', { class: 'skeleton sk-line', style: { width: '80%' } }))));
     const tableWrap = h('div', { class: 'table-wrap' }, table);
     const listBox = h('div', {}, view === 'card' ? grid : tableWrap);
-    append(main, notices, rtBlock, stats,
+    append(main, notices, h('div', { class: 'row wrap', style: { marginBottom: '10px' } },
+      h('a', { class: 'btn btn-secondary btn-sm', href: '#/pool-trend' }, icon('activity', 'icon icon-sm'), '查看总池并发走势')), rtBlock, stats,
       h('div', { class: 'card' },
         h('div', { class: 'card-head' },
           h('div', { class: 'row wrap' }, h('h2', { class: 'card-title' }, icon('server'), '账号额度'), countText),
