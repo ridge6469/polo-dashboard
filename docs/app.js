@@ -789,16 +789,19 @@
     return w && w.end * 1000 > Date.now() ? w : null;
   }
   const usdS = (v) => (v === null || v === undefined || isNaN(v) ? '—' : '$' + (Math.abs(v) >= 1000 ? Math.round(v).toLocaleString('en-US') : Math.abs(v) >= 100 ? v.toFixed(0) : v.toFixed(Math.abs(v) >= 10 ? 1 : 2)));
-  const QW_STATE = { final: '已结束 · 精确值', ended: '已结束 · 结束 10 分钟后出精确值', live: '进行中 · 每 30 秒更新', pending: '刚发现，正在统计起点以来的额度' };
+  const QW_STATE = { final: '已结束 · 精确值', ended: '已结束 · 长请求跑完、结束 40 分钟后出精确值', live: '进行中 · 每 30 秒更新', pending: '刚发现，正在统计起点以来的额度' };
   // 用满预测：服务器在 Polo 刷新用量 % 的那一刻算“已跑 ÷ %”；本窗口用量太低时用以往窗口的中位数。老数据没有时按结束时的 % 算
-  const FULL_SRC = { now: '按本窗口推算', cur: '按本窗口现在的 % 粗算', rejected: '已打满，实际值', hist: '按这个号以往的窗口', pool: '按同席位全部号以往的窗口' };
+  const FULL_SRC = { now: '按本窗口推算', cur: '按本窗口现在的 % 粗算', rejected: '已打满，到 100% 那一刻的实际值', hist: '按这个号以往的窗口', pool: '按同席位全部号以往的窗口' };
   const qwFull = (w) => (w && w.full && w.full.est > 0 ? w.full.est : w && w.state !== 'live' && typeof w.usd === 'number' && typeof w.last_pct === 'number' && w.last_pct >= 5 ? (w.usd * 100) / w.last_pct : null);
   function fullTitle(w, kind) {
     const f = w && w.full;
     if (!f || !(f.est > 0)) return `用满 ${kind} 预测：还算不出来（本窗口用量不到 5%，也还没有结束过的窗口可参考）`;
     const lines = [`用满 ${kind} 预测 ≈ ${usd(f.est)}（${FULL_SRC[f.src] || f.src}）`];
     if (f.src === 'now') lines.push(`Polo 在 ${fmtTime(f.at, false)} 把用量刷新到 ${pct(f.pct)}，那一刻这个窗口已跑 ${usd(f.usd)}`, `${usd(f.usd)} ÷ ${pct(f.pct)} ≈ ${usd(f.est)}（% 是整数，实际在 ${usd(f.lo)} – ${usd(f.hi)} 之间）`);
-    else if (f.src === 'rejected') lines.push('这个窗口已被 Anthropic 拒（打满），这是实际跑了的额度');
+    else if (f.src === 'rejected') {
+      lines.push(`用量在 ${fmtTime(f.at, false)} 到 100%（Polo 显示冷却或 100% 的时刻），那一刻这个窗口已跑 ${usd(f.usd)}：这就是这个窗口的额度`);
+      if (typeof w.usd === 'number' && w.usd > f.usd + 0.05) lines.push(`之后又记了 ${usd(w.usd - f.usd)}：打满时还在跑的请求跑完才记账（不算额度，算在已跑 ${usd(w.usd)} 里）`);
+    }
     else if (f.src === 'cur') lines.push(`现在已跑 ${usd(f.usd)} ÷ Polo 显示的 ${pct(f.pct)}（% 可能是几分钟前刷新的，会略偏高）；等 Polo 下一次刷新 % 就换成精确的算法`);
     else lines.push(`本窗口用量还不到 5%，用${f.src === 'hist' ? '这个号' : '全部号'}以往 ${f.n} 个窗口的中位数（${usd(f.lo)} – ${usd(f.hi)}）`);
     if (w.state === 'live' && typeof w.usd === 'number' && f.src !== 'rejected') lines.push(`还能跑 ≈ ${usd(Math.max(0, f.est - w.usd))}`);
@@ -807,7 +810,7 @@
   function qwTitle(w, kind) {
     if (!w) return `这个号现在没有进行中的 ${kind} 窗口`;
     return [`${kind} 窗口 ${fmtShort(w.start)} – ${fmtShort(w.end)}（按重置时间推算）`,
-      typeof w.usd === 'number' ? `已跑 ${usd4(w.usd)}（所有模型合计）· ${compact(w.requests)} 次请求 · ${compact(w.tokens)} tokens` : '正在统计起点以来跑了多少额度…',
+      typeof w.usd === 'number' ? `已跑 ${usd4(w.usd)}（所有模型合计，按请求跑完的时刻记）· ${compact(w.requests)} 次请求` + (w.tokens ? ` · ${compact(w.tokens)} tokens` : '') : '正在统计起点以来跑了多少额度…',
       w.state === 'live' && w.usd_at ? `算到 ${fmtTime(w.usd_at, false)}（每 30 秒更新，窗口结束后再精确统计）` : QW_STATE[w.state] || '',
       w.missing ? `有 ${w.missing} 段 10 分钟没查到，数字偏小；窗口结束后会精确统计` : '',
       '点击看每个窗口的历史'].filter(Boolean).join('\n');
@@ -819,14 +822,14 @@
     return h('a', { class: cls + (w.missing ? ' partial' : '') + (typeof w.usd === 'number' ? '' : ' wait'), href: qwLink(qwKey(r), kind), title: qwTitle(w, kind),
       onclick: (e) => e.stopPropagation() }, h('b', { text: typeof w.usd === 'number' ? usdS(w.usd) : '…' }), h('span', { class: 'qb-unit', text: '已跑' }));
   }
-  // 用满预测：“满 ≈$810”；打满的窗口显示“打满 $777”
+  // 用满预测：“满 ≈$810”；打满的窗口显示“打满时 $22.3”（用量到 100% 那一刻的已跑；之后跑完的请求算在已跑里）
   function fullCell(r, kind, cls) {
     const w = qwOf(r, kind), f = w && w.full;
     if (!w || !f || !(f.est > 0)) return null;
     const done = f.src === 'rejected';
     return h('a', { class: cls + ' qb-full' + (f.src === 'hist' || f.src === 'pool' ? ' guess' : '') + (done ? ' done' : ''), href: qwLink(qwKey(r), kind), title: fullTitle(w, kind),
       onclick: (e) => { e.stopPropagation(); if (isPhone()) { e.preventDefault(); toast(fullTitle(w, kind), 'info', 9000); } } },
-      h('span', { class: 'qb-unit', text: done ? '打满' : '满' }), h('b', { text: (done ? '' : '≈') + usdS(f.est) }));
+      h('span', { class: 'qb-unit', text: done ? '打满时' : '满' }), h('b', { text: (done ? '' : '≈') + usdS(f.est) }));
   }
   async function loadQw() {
     try { S.qw = await api('GET', '/me/windows/current'); S.qwAt = Date.now(); } catch { /* 拿不到就不显示 */ }
@@ -842,8 +845,23 @@
       slots: live && has(live.slots) ? live.slots : hl.session_slots,
     };
   }
+  // Polo 抽屉里的“近 5 小时 / 7 天 / 30 天”比卡片的“今日”计数更新得慢（长请求跑完才算进去），会出现“近 7 天”比“今日”还少。
+  // 近 7 天 / 30 天一定包含今天：少于今日就按今日算（请求、token、金额各自取大的）
+  function histFix(d) {
+    const hs = d.history || {}, t = d.today || {}, out = Object.assign({}, hs);
+    const big = (a, b) => { const x = toNum(a), y = toNum(b); return x === null ? b : y === null ? a : y > x ? b : a; };
+    let floor = t;
+    for (const k of ['7d', '30d']) {
+      const h0 = hs[k];
+      if (!h0) continue;
+      const fixed = { requests: big(h0.requests, floor.requests), tokens: big(h0.tokens, floor.tokens), official_cost: big(h0.official_cost, floor.cost !== undefined ? floor.cost : floor.official_cost) };
+      out[k] = Object.assign({}, h0, fixed, { lifted: fixed.requests !== h0.requests || fixed.tokens !== h0.tokens || fixed.official_cost !== h0.official_cost });
+      floor = out[k];
+    }
+    return out;
+  }
   function accountRow(r, shared) {
-    const d = r.detail || {}, hl = r.health || {}, t = d.today || {}, rt = d.realtime || {}, hs = d.history || {};
+    const d = r.detail || {}, hl = r.health || {}, t = d.today || {}, rt = d.realtime || {}, hs = histFix(d);
     const admin = isAdmin();
     const lastUsed = ago(d.last_used_at) || hl.last_used_display;
     const on = !r.state || r.state === '启用';
@@ -1029,7 +1047,7 @@
       others.length ? h('span', { class: 'chip chip-warn', title: '这些账号使用同一个出口 IP', text: '与 ' + others.join('、') + ' 共用' }) : null);
   }
   function accountCard(r, shared) {
-    const d = r.detail || {}, hl = r.health || {}, rt = d.realtime || {}, hs = d.history || {};
+    const d = r.detail || {}, hl = r.health || {}, rt = d.realtime || {}, hs = histFix(d);
     const mp = maxPct(r), off = r.state && r.state !== '启用';
     const lastUsed = ago(d.last_used_at) || hl.last_used_display;
     const old = d.usage_updated_at && Date.now() - toDate(d.usage_updated_at).getTime() > 30 * 60000;
@@ -1482,7 +1500,7 @@
     const since = h('span'), err = h('div');
     const help = h('div', { class: 'card', style: { marginBottom: '16px' } }, h('div', { class: 'card-body' }, howTo('怎么算的',
       h('div', { class: 'hint', text: '窗口：每次采集（约 3 分钟）读每个号 5h / 7d 的“X 后重置”，重置时间往前推 5 小时 / 7 天就是窗口起点（多算 10 分钟以防取整，但不早于上一个窗口的结束；两个窗口之间没有用量，多算不会算进别的窗口）。' }),
-      h('div', { class: 'hint', text: '已跑：和结算用的同一个数——Polo 的成本，所有模型加在一起。进行中的窗口每 30 秒更新；窗口结束 10 分钟后按起止时间在「用量统计」里精确查一次。' }),
+      h('div', { class: 'hint', text: '已跑：Polo 的成本（和结算同一个数），所有模型加在一起，按请求跑完的时刻记（和 Anthropic 的用量 % 同步），只增不减，每 30 秒更新。「用量统计」按请求开始的时刻记、跑完才写，长请求会晚到十几二十分钟，所以不拿它当实时的数。打满时 = 用量到 100% 那一刻的已跑；打满时还在跑的请求跑完会再记一些，所以已跑可能比打满时多。' }),
       h('div', { class: 'hint', text: '满 ≈（用满预测）：每次 Polo 把用量 % 刷新到新的数，就用那一刻的“已跑 ÷ %”算出这个窗口跑满 100% 大约是多少钱（% 是整数，% 越高越准）。本窗口用量不到 5% 时用这个号以往窗口的中位数（灰色）。' }),
       h('div', { class: 'hint', text: '缓存：Polo 卡片上的 token 含缓存读写，「用量统计」的 Token 只有输入 + 输出，两者之差就是缓存；缓存占比 = 缓存 token ÷ 全部 token。下面「缓存和额度」看它对每 1% 额度能跑多少钱的影响。' }),
       h('div', { class: 'faint xs', style: { marginTop: '4px' } }, since))));
