@@ -1502,7 +1502,8 @@
       const lines = [];
       const per = (x, f) => f.intercept + f.slope * x;
       if (!sf || sf.n < 8) {
-        lines.push(h('p', { text: `数据还不够：现在有 ${sf ? sf.n : 0} 段（${ckind} 用量每涨 ${dp} 个点记一段），至少要 8 段、而且缓存占比有高有低，才看得出影响。号跑起来以后会自己变多。` }));
+        const nseg = ((cdata.segments || []).filter((s) => s.kind === ckind && s.all > 0 && s.io !== null && s.p1 > s.p0)).length;
+        lines.push(h('p', { text: `数据还不够：现在有 ${nseg} 段（${ckind} 用量每涨 ${dp} 个点记一段），至少要 8 段、而且缓存占比有高有低，才看得出影响。号跑起来以后会自己变多。` }));
         if (sf && sf.n) lines.push(h('p', { class: 'faint', text: `目前平均：缓存占比 ${cpct(sf.mean_x)}，每 1% 额度 ≈ ${usd(sf.mean_y)}（跑满 100% ≈ ${usd(sf.mean_y * 100)}）` }));
       } else if (sf.slope === null) {
         lines.push(h('p', { text: `这段时间缓存占比都在 ${cpct(sf.x_min)} – ${cpct(sf.x_max)} 之间，变化太小，看不出影响。平均每 1% 额度 ≈ ${usd(sf.mean_y)}（${sf.n} 段）。` }));
