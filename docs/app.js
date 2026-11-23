@@ -1535,6 +1535,12 @@
         lines.push(h('p', { text: `按拟合：缓存 ${cpct(sf.x_min)} 时每 1% ≈ ${usd(per(sf.x_min, sf))}（跑满 ≈ ${usd(per(sf.x_min, sf) * 100)}）；缓存 ${cpct(sf.x_max)} 时每 1% ≈ ${usd(per(sf.x_max, sf))}（跑满 ≈ ${usd(per(sf.x_max, sf) * 100)}）。` }));
       }
       if (wf && wf.n >= 3) lines.push(h('p', { class: 'faint', text: `按整个窗口看（${wf.n} 个）：平均缓存 ${cpct(wf.mean_x)}，跑满 ≈ ${usd(wf.mean_y * 100)}` + (wf.slope !== null ? `；缓存每高 10 个百分点，跑满${wf.slope >= 0 ? '多' : '少'} ${usd(Math.abs(wf.slope * 10))}` : '') }));
+      const sr = F.segments_rel;
+      if (sr && sr.n >= 8 && sr.slope !== null && (F.accounts || 0) >= 1) {
+        const d = sr.slope * 0.1;
+        lines.push(h('p', {}, h('b', { text: `同一个号自己比：缓存占比每高 10 个百分点，每 1% 额度跑的钱${d >= 0 ? '多' : '少'} ${Math.abs(d * 100).toFixed(0)}%` }),
+          h('span', { class: 'faint', text: `（相对这个号自己的平均；${F.accounts} 个号、${sr.n} 段，相关系数 ${(sr.r || 0).toFixed(2)}。各号额度大小不同，混在一起比会把“号不一样”当成缓存的影响，这一行更可信）` })));
+      }
       lines.push(h('p', { class: 'faint xs', text: `图：横轴是缓存占比，纵轴是每 1% 额度跑了多少美元。蓝点是每一段（用量从 a% 涨到 b%，至少 ${dp} 个点，点越大涨得越多），橙色菱形是整个窗口，红色虚线是拟合的趋势。% 是整数，单段误差大，看很多段的趋势。` + (cdata.ticks_since ? `从 ${fmtTime(cdata.ticks_since)} 开始记录。` : '') }));
       clear(cSum, lines);
       const bins = F.bins || [];
@@ -1557,16 +1563,16 @@
       h('thead', {}, h('tr', {}, [first, '步数', '额度涨了', '平均并发', '缓存占比', '每请求 token', '每 1% 额度'].map((x) => h('th', { text: x })))),
       h('tbody', {}, rows.map((g) => h('tr', {},
         h('td', { 'data-label': first, text: label(g) }),
-        h('td', { 'data-label': '步数', class: 'num', text: String(g.n) }),
+        h('td', { 'data-label': '步数', class: 'num', text: `${g.n}（${g.accounts} 个号）` }),
         h('td', { 'data-label': '额度涨了', class: 'num', text: `${Math.round(g.dp)} 个点` }),
         h('td', { 'data-label': '平均并发', class: 'num', text: g.conc.toFixed(1) }),
         h('td', { 'data-label': '缓存占比', class: 'num', text: cpct(g.cache) }),
         h('td', { 'data-label': '每请求 token', class: 'num', text: ktok(g.ctx) }),
-        h('td', { 'data-label': '每 1% 额度', class: 'num' }, h('b', { text: usd(g.per) })))))));
+        h('td', { 'data-label': '每 1% 额度', class: 'num' }, h('b', { text: g.rel ? `平均的 ${g.rel.toFixed(2)} 倍` : '—' }), h('span', { class: 'faint', text: ` ${usd(g.per)}` })))))));
     // 并发、每个请求带的 token 和缓存、额度的关系（按 % 每变一次的“步”统计）
     function drawConc() {
       const C = cdata.conc && cdata.conc[ckind], out = [h('h4', { text: '并发、上下文和缓存' })];
-      out.push(h('p', { class: 'faint xs', text: '每一步 = Polo 刷新一次用量 %（约 10 分钟一次）且 % 变了。平均并发 = 这一步里这个号同时在跑的请求数（每 30 秒读一次）；每请求 token = 全部 token ÷ 请求数，就是每次请求带的上下文大小（含缓存）。' + (cdata.conc_since ? `从 ${fmtTime(cdata.conc_since)} 开始记录并发。` : '') }));
+      out.push(h('p', { class: 'faint xs', text: '每一步 = Polo 刷新一次用量 %（约 10 分钟一次）且 % 变了。平均并发 = 这一步里这个号同时在跑的请求数（每 30 秒读一次）；每请求 token = 全部 token ÷ 请求数，就是每次请求带的上下文大小（含缓存）。各号额度大小不同，“每 1% 额度跑的钱”都换成“是这个号自己平均的几倍”再比（表里灰色是美元原值）。' + (cdata.conc_since ? `从 ${fmtTime(cdata.conc_since)} 开始记录并发。` : '') }));
       if (!C || C.n < 10) {
         out.push(h('p', { text: `数据还不够：现在有 ${C ? C.n : 0} 步带并发数据，至少要 10 步。号跑起来以后每小时会多几步。` }));
         return clear(cConc, out);
@@ -1583,7 +1589,7 @@
       if (M) {
         const term = (k, scale, what) => {
           const b = M[k].b * scale, se = (M[k].se || 0) * scale, sig = Math.abs(b) > 2 * se;
-          return `${what}，每 1% 额度${b >= 0 ? '多' : '少'} ${usd(Math.abs(b))}` + (sig ? '' : '（在误差范围内，算不上）');
+          return `${what}，每 1% 额度跑的钱${b >= 0 ? '多' : '少'} ${Math.abs(b * 100).toFixed(0)}%` + (sig ? '' : '（在误差范围内，算不上）');
         };
         out.push(h('p', {}, h('b', { text: '三个一起看（排除彼此干扰）：' }),
           [term('cache', 0.1, '缓存占比高 10 个百分点'), term('conc', 1, '并发多 1'), term('ctx', 1, '每请求多 10 万 token')].join('；') + `。（${C.n} 步）`));
@@ -1595,42 +1601,60 @@
     // 额度公式反推：涨的点数 = a×输入输出的钱 + b×缓存写的钱 + c×缓存读的钱（钱按 Polo 官方价）
     function drawFormula() {
       const F = cdata.formula && cdata.formula[ckind], out = [h('h4', { text: '官方额度怎么算（反推）' })];
-      const pr = cdata.prices || {}, po = pr.opus || [4, 20, 5, 0.2], pf = pr.fable || [8, 40, 10, 0.2];
-      out.push(h('p', { class: 'faint xs', text: `做法：每一步花的钱（Polo 官方价）拆成输入输出、缓存写、缓存读三部分，拟合“用量涨的点数 = a×输入输出的钱 + b×缓存写的钱 + c×缓存读的钱”。如果官方额度就是按 API 价算的，a、b、c 应该一样；c 小说明缓存读在额度里比它的价格“便宜”。Polo 不分号给缓存读 / 写，只有自己号池的合计，所以只用这个号占自己号池花费 ≥ ${Math.round((cdata.dom_min || 0.8) * 100)}% 的步；输入和输出用单价解出来（只在几乎全是一种模型的步里）。单价（每百万 token，输入 / 输出 / 缓存写 / 缓存读）：Opus ${po.join(' / ')}，Fable ${pf.join(' / ')}。` }));
+      const pr = cdata.prices || {}, po = pr.opus || [4, 20, 5, 8, 0.2], pf = pr.fable || [8, 40, 10, 16, 0.2];
+      const ps = (x) => `${x[0]} / ${x[1]} / ${x[2]}（1 小时 ${x[3]}）/ ${x[4]}`;
+      out.push(h('p', { class: 'faint xs', text: `做法：每一步花的钱（Polo 官方价）拆开，拟合“用量涨的点数 = 这个号的额度系数 × Σ 各部分的钱 × 各部分的权重”。权重所有号共用、按花费加权平均是 1：如果官方额度就是按 API 价算的，各部分都是 1；大于 1 说明这部分在额度里比它的价格“贵”，小于 1 是“便宜”。每个号额度大小不同，单独算一个系数（下面“各号每 1% 额度”）。Polo 不分号给缓存读 / 写，只有自己号池的合计，所以只用这个号占自己号池花费 ≥ ${Math.round((cdata.dom_min || 0.8) * 100)}% 的步。缓存写分 5 分钟和 1 小时两种价，Polo 也不按号给各占多少：拆缓存写、拆输入输出时按“全是 5 分钟”和“全是 1 小时”各算一遍，真实值在两者之间；“缓存读 vs 其余”不受影响。单价（每百万 token，输入 / 输出 / 缓存写 / 缓存读）：Opus ${ps(po)}，Fable ${ps(pf)}。` }));
       const need = 15;
-      if (!F || !F.three || F.n < need) {
-        out.push(h('p', { text: `数据还不够：现在有 ${F ? F.n : 0} 步可用（共 ${F ? F.n_all : 0} 步），至少要 ${need} 步，而且用法要有变化（缓存写时多时少、输出时多时少）才分得开。要看准大概需要几百步（几天）。` }));
+      if (!F || !F.two || F.n < need) {
+        out.push(h('p', { text: `数据还不够：现在有 ${F ? F.n : 0} 步可用（共 ${F ? F.n_all : 0} 步），至少要 ${need} 步，而且用法要有变化（缓存读时多时少）才分得开。要看准大概需要几百步（几天）。` }));
         return clear(cForm, out);
       }
-      const k = F.base && F.base.coef.usd.b, T = F.three.coef, sp = F.spend || {};
-      const rows = [['io', '输入 + 输出', sp.c_io], ['cw', '缓存写', sp.c_cw], ['cr', '缓存读', sp.c_cr]];
-      const rel = (x) => (k ? x / k : null);
-      out.push(h('p', {}, `按 API 价统一算：每 1% ${ckind} 额度 ≈ `, h('b', { text: usd(1 / k) }), h('span', { class: 'faint', text: `（${F.n} 步、共涨 ${Math.round(F.dp)} 个点；其中 Opus 占 ${cpct(F.opus_share)}）` })));
-      out.push(h('div', { class: 'table-wrap' }, h('table', { class: 'table responsive qc-table' },
-        h('thead', {}, h('tr', {}, ['哪类', '占花费', '1 美元耗多少额度', '相对平均', '每 1% 额度可跑'].map((x) => h('th', { text: x })))),
-        h('tbody', {}, rows.map(([key, name, spend]) => {
-          const b = T[key].b, se = T[key].se || 0;
-          return h('tr', {},
-            h('td', { 'data-label': '哪类', text: name }),
-            h('td', { 'data-label': '占花费', class: 'num', text: cpct(sp.usd ? spend / sp.usd : null) }),
-            h('td', { 'data-label': '1 美元耗多少额度', class: 'num', text: `${b.toFixed(3)} ± ${(2 * se).toFixed(3)} 个点` }),
-            h('td', { 'data-label': '相对平均', class: 'num' }, h('b', { text: k ? `${rel(b).toFixed(2)} 倍` : '—' }), h('span', { class: 'faint', text: k ? ` ±${(2 * se / k).toFixed(2)}` : '' })),
-            h('td', { 'data-label': '每 1% 额度可跑', class: 'num', text: b > 0 ? usd(1 / b) : '—' }));
-        })))));
-      const cr = T.cr, lo = (cr.b - 2 * (cr.se || 0)) / k, hi = (cr.b + 2 * (cr.se || 0)) / k;
-      const verdict = hi < 1 ? `缓存读在官方额度里比它的 API 价“便宜”（只算 ${lo.toFixed(2)}–${hi.toFixed(2)} 倍）：缓存读占的钱越多，每 1% 额度能跑的钱越多。`
-        : lo > 1 ? `缓存读在官方额度里比它的 API 价“贵”（算 ${lo.toFixed(2)}–${hi.toFixed(2)} 倍）：缓存读占的钱越多，每 1% 额度能跑的钱越少。`
-        : `目前看不出缓存读和其他的区别（${lo.toFixed(2)}–${hi.toFixed(2)} 倍，包含 1），可能就是按 API 价算，也可能数据还不够。`;
-      out.push(h('p', {}, h('b', { text: verdict }), h('span', { class: 'faint', text: `（± 是大约 95% 的范围；R² ${F.three.r2 !== null ? F.three.r2.toFixed(2) : '—'}）` })));
-      const Q = F.four && F.n_split >= 20 && F.four.coef;
-      if (Q) {
-        const P = (F.opus_share === null || F.opus_share >= 0.5) ? po : pf, nm2 = (F.opus_share === null || F.opus_share >= 0.5) ? 'Opus' : 'Fable';
-        const eq = (key, i) => (Q[key].b * P[i]) / (Q.in.b * P[0]);
+      const sp = F.spend || {}, f2 = (x) => x.toFixed(2);
+      const rng = (a, b, f) => (Math.abs(a - b) < 0.005 * Math.max(Math.abs(a), Math.abs(b), 1e-9) ? f(a) : `${f(Math.min(a, b))} – ${f(Math.max(a, b))}`);
+      // 主要结论：缓存读 vs 其余（不受缓存写 5 分钟 / 1 小时、输入 / 输出怎么分的影响）
+      const C2 = F.two.coef, rr = C2.cr.b / C2.rest.b, rse = Math.abs(rr) * Math.hypot((C2.cr.se || 0) / C2.cr.b, (C2.rest.se || 0) / C2.rest.b);
+      const lo = rr - 2 * rse, hi = rr + 2 * rse;
+      const verdict = hi < 1 ? `缓存读在官方额度里比它的 API 价“便宜”：同样 1 美元，缓存读只耗其余部分 ${f2(Math.max(0, lo))}–${f2(hi)} 倍的额度。所以缓存读占的钱越多，每 1% 额度能跑的钱越多。`
+        : lo > 1 ? `缓存读在官方额度里比它的 API 价“贵”：同样 1 美元，缓存读要耗其余部分 ${f2(lo)}–${f2(hi)} 倍的额度。所以缓存读占的钱越多，每 1% 额度能跑的钱越少。`
+        : `目前看不出缓存读和其余部分的区别（${f2(Math.max(0, lo))}–${f2(hi)} 倍，包含 1）：可能就是按 API 价算，也可能数据还不够。`;
+      out.push(h('p', {}, h('b', { text: verdict }), h('span', { class: 'faint', text: `（${F.n} 步、共涨 ${Math.round(F.dp)} 个点，Opus 占 ${cpct(F.opus_share)}；缓存读占花费 ${cpct(sp.usd ? sp.c_cr / sp.usd : null)}；范围是大约 95% 的把握；R² ${F.two.r2 !== null ? F.two.r2.toFixed(2) : '—'}）` })));
+      // 各号的额度大小
+      const accts = Object.entries(F.accounts || {}).sort((a, b) => b[1].n - a[1].n);
+      if (accts.length) {
+        out.push(h('p', {}, h('b', { text: '各号每 1% 额度 ≈ ' }), accts.map(([k, v], i) => `${i ? '；' : ''}${nm(k)} ${usd(v.per_pct)}（${v.n} 步）`).join(''),
+          h('span', { class: 'faint', text: '（按这些步的用法、平均价算）' })));
+      }
+      // 再拆出缓存写：按“全 5 分钟”“全 1 小时”各算一遍
+      const T5 = F.three && F.three['5m'], T1 = F.three && F.three['1h'];
+      if (T5 && T1) {
+        const rows = [['io', '输入 + 输出'], ['cw', '缓存写'], ['cr', '缓存读']];
+        const share = (key, t) => (key === 'cr' ? sp.c_cr : sp[(key === 'io' ? 'c_io_' : 'c_cw_') + t]) / (sp.usd || 1);
+        out.push(h('div', { class: 'table-wrap' }, h('table', { class: 'table responsive qc-table' },
+          h('thead', {}, h('tr', {}, ['哪类', '占花费', '1 美元耗的额度（平均 = 1）'].map((x) => h('th', { text: x })))),
+          h('tbody', {}, rows.map(([key, name]) => {
+            const a = T5.coef[key].b, b = T1.coef[key].b, se = Math.max(T5.coef[key].se || 0, T1.coef[key].se || 0);
+            const weak = Math.min(a, b) <= 0 || se > 0.5 * Math.max(Math.abs(a), Math.abs(b));
+            return h('tr', {},
+              h('td', { 'data-label': '哪类', text: name }),
+              h('td', { 'data-label': '占花费', class: 'num', text: rng(share(key, '5m'), share(key, '1h'), cpct) }),
+              h('td', { 'data-label': '1 美元耗的额度（平均 = 1）', class: 'num' }, weak ? h('span', { class: 'faint', text: `还看不准（${rng(a, b, f2)} ±${f2(2 * se)}）` })
+                : [h('b', { text: rng(a, b, f2) + ' 倍' }), h('span', { class: 'faint', text: ` ±${f2(2 * se)}` })]));
+          })))));
+        out.push(h('p', { class: 'faint xs', text: '有两个数的格子：前后分别是按“缓存写全是 5 分钟”和“全是 1 小时”算的（按大小排），真实值在中间。' }));
+      }
+      // 输入 / 输出也分开：换算成“几个输入 token”
+      const Q5 = F.four && F.four['5m'], Q1 = F.four && F.four['1h'], ns = F.n_split || {};
+      if (Q5 && Q1 && (ns['5m'] || 0) >= 20 && (ns['1h'] || 0) >= 20) {
+        const opus = F.opus_share === null || F.opus_share >= 0.5, P = opus ? po : pf;
+        const eq = (Q, key, pi) => (Q.coef[key].b * pi) / (Q.coef.in.b * P[0]);
+        // 估计是负数，或误差超过一半：不给数字
+        const shaky = (key) => [Q5, Q1].some((Q) => Q.coef[key].b <= 0 || Q.coef.in.b <= 0 || (Q.coef[key].se || 0) > 0.5 * Math.abs(Q.coef[key].b) || (Q.coef.in.se || 0) > 0.5 * Math.abs(Q.coef.in.b));
+        const show = (key, txt) => (shaky(key) ? '还看不准' : txt);
         out.push(h('p', {}, h('b', { text: '按 token 换算（输入、输出分开）：' }),
-          `1 个输出 token ≈ ${eq('out', 1).toFixed(1)} 个输入 token，1 个缓存写 ≈ ${eq('cw', 2).toFixed(2)} 个，1 个缓存读 ≈ ${eq('cr', 3).toFixed(3)} 个`,
-          h('span', { class: 'faint', text: `（${nm2} 的 API 价里是 ${(P[1] / P[0]).toFixed(1)} / ${(P[2] / P[0]).toFixed(2)} / ${(P[3] / P[0]).toFixed(3)}；${F.n_split} 步）` })));
-      } else if (F.n_split < 20) {
-        out.push(h('p', { class: 'faint', text: `输入和输出分开算还要更多数据：现在 ${F.n_split} 步，至少 20 步。` }));
+          `1 个输出 token ≈ ${show('out', rng(eq(Q5, 'out', P[1]), eq(Q1, 'out', P[1]), (x) => x.toFixed(1)) + ' 个输入 token')}；1 个缓存写 ≈ ${show('cw', rng(eq(Q5, 'cw', P[2]), eq(Q1, 'cw', P[3]), f2) + ' 个（5 分钟 / 1 小时）')}；1 个缓存读 ≈ ${show('cr', rng(eq(Q5, 'cr', P[4]), eq(Q1, 'cr', P[4]), (x) => x.toFixed(3)) + ' 个')}`,
+          h('span', { class: 'faint', text: `（${opus ? 'Opus' : 'Fable'} 的 API 价里是 ${(P[1] / P[0]).toFixed(1)} / ${f2(P[2] / P[0])}（1 小时 ${f2(P[3] / P[0])}）/ ${(P[4] / P[0]).toFixed(3)}；${Math.min(ns['5m'], ns['1h'])} 步以上）` })));
+      } else {
+        out.push(h('p', { class: 'faint', text: `输入和输出分开算还要更多数据：现在 ${Math.min(ns['5m'] || 0, ns['1h'] || 0)} 步，至少 20 步。` }));
       }
       clear(cForm, out);
     }
