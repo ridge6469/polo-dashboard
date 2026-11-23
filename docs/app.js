@@ -701,7 +701,14 @@
         others.length ? h('span', { class: 'chip chip-warn', title: '这些账号使用同一个出口 IP', text: '与 ' + others.join('、') + ' 共用' }) : null));
   }
   // 列表里“并发 / 会话 / 已绑定会话”的说明（电脑悬停、手机点击都能看）
-  const rtHelp = (conc, sessions, slots) => `圆圈里的 ${conc} = 此刻正在发的请求数（并发，每分钟更新）；会话 ${dash(sessions)} = 此刻活跃的会话；已绑定会话 ${dash(slots)} = Polo 固定分给这个号、还没释放的对话数（同一段对话一直走同一个号），不是正在用的数量，跟额度和结算无关。`;
+  const rtHelp = (conc, sessions, slots) => `并发 ${conc} = 此刻正在发的请求数（每分钟更新）；会话 ${dash(sessions)} = 此刻活跃的会话；已绑定会话 ${dash(slots)} = Polo 固定分给这个号、还没释放的对话数（同一段对话一直走同一个号），不是正在用的数量，跟额度和结算无关。`;
+  // 醒目的“并发 N”标签：手机列表（cls='mob'）和卡片视图用；大于 0 时用渐变蓝
+  function concPill(r, cls = '') {
+    const ln = liveNums(r), n = ln.conc || 0, rt = (r.detail && r.detail.realtime) || {};
+    const tip = rtHelp(n, rt.sessions, ln.slots);
+    return h('span', { class: 'conc-pill' + (n > 0 ? ' live' : '') + (cls ? ' ' + cls : ''), title: tip, onclick: (e) => { e.stopPropagation(); toast(tip, 'info', 8000); } },
+      h('small', { text: '并发' }), h('b', { text: String(n) }));
+  }
   // 每分钟的实时数字（并发 / RPM / TPM / 已绑定会话）；超过 5 分钟没更新就不用，退回 10 分钟快照
   function liveOf(r) {
     const rt = S.dash && S.dash.realtime;
@@ -768,7 +775,7 @@
           h('span', { class: 'switch' + (on ? ' on' : ''), title: `后台状态：${r.state || '未知'}（只读）` }, h('i'))),
         h('div', { class: 'l-line', style: { marginTop: '6px' } },
           seatBadge(r, admin), fableHint(r), ownerChip(r, admin),
-          h('span', { class: 'l-name mono', title: '后台显示名', text: dash(r.display_name) })),
+          h('span', { class: 'l-name mono', title: '后台显示名', text: dash(r.display_name) }), concPill(r, 'mob')),
         h('div', { class: 'l-sub' }, meta || '—'),
         h('div', { class: 'l-sub' }, lastUsed ? h('span', { title: d.last_used_at ? '最近使用：' + fmtTime(d.last_used_at) : null, text: `${lastUsed}使用` }) : '未使用',
           d.usage_updated_at ? h('span', { class: old ? 'text-warn' : '', title: '后台最近一次刷新该账号用量：' + fmtTime(d.usage_updated_at) }, ` · 用量 ${ago(d.usage_updated_at)}更新`) : null),
@@ -945,7 +952,7 @@
     return h('div', { class: 'acard' + (off ? ' off' : mp >= 90 ? ' hot' : mp >= 75 ? ' warm' : '') },
       h('div', { class: 'ac-head' },
         h('div', { class: 'ac-id' },
-          h('div', { class: 'row', style: { gap: '8px', flexWrap: 'wrap' } }, h('span', { class: 'ac-name', text: dash(r.display_name) }), statusBadge(r)),
+          h('div', { class: 'row', style: { gap: '8px', flexWrap: 'wrap' } }, h('span', { class: 'ac-name', text: dash(r.display_name) }), statusBadge(r), concPill(r)),
           r.email ? h('div', { class: 'email mono', title: r.email + '（点击复制）', onclick: () => copy(r.email, '邮箱') }, r.email) : null),
         h('div', { class: 'ac-meta' },
           h('div', { title: d.last_used_at ? '最近使用：' + fmtTime(d.last_used_at) : '' }, lastUsed ? `${lastUsed}使用` : '—'),
@@ -958,7 +965,7 @@
         h('tbody', {}, statRow('今日', d.today, 'cost'), statRow('近 5 小时', hs['5h'], 'official_cost'), statRow('近 7 天', hs['7d'], 'official_cost')))),
       h('div', { class: 'ac-sec ac-foot' }, ipLine(r, shared || {}),
         h('div', { class: 'ac-rt' }, ((ln) => [
-          h('span', { text: `并发 ${dash(ln.conc)}` }), h('span', { text: `RPM ${dash(ln.rpm)}` }), h('span', { text: `TPM ${compact(ln.tpm)}` }), h('span', { text: `会话 ${dash(rt.sessions)}` }),
+          h('span', { text: `RPM ${dash(ln.rpm)}` }), h('span', { text: `TPM ${compact(ln.tpm)}` }), h('span', { text: `会话 ${dash(rt.sessions)}` }),
           ln.slots !== undefined && ln.slots !== null ? h('span', { text: `已绑定 ${ln.slots}` }) : null])(liveNums(r)),
           h('i'), h('span', { title: '最近 24 小时', text: `24h 请求 ${dash(hl.requests_24h)}` }), h('span', { text: `限流 ${dash(hl.rate_limits_24h)}` }), h('span', { text: `成功率 ${dash(hl.success_24h)}` }))));
   }
