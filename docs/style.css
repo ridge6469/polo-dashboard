@@ -895,3 +895,10 @@ tr:hover .nick-btn { opacity: 1; }
   .card, .notice, .mcard, .rise, .acard, .sbar i { animation: none !important; }
   .acard:hover { transform: none; }
 }
+/* ---------- 实时数字（管理员看板顶部） ---------- */
+.rt-block .stats { margin-bottom: 14px; }
+.rt-head { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; margin: 0 2px 8px; font-size: 13px; }
+.rt-head .faint { font-size: 12px; }
+.live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 3px rgba(16, 185, 129, .18); flex-shrink: 0; }
+.live-dot.off { background: var(--faint); box-shadow: none; }
+@media (max-width: 760px) { .rt-block .stats { margin-bottom: 10px; } }

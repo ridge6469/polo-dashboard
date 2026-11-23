@@ -6,7 +6,7 @@
   const API = 'https://notes.fuckingclaude.top:8446/polo';
   const SESSION_KEY = 'polo_session';
   const S = { token: null, user: null, timers: [], dash: null, pending: null, pendingAt: 0, accountsCache: null, accountsAt: 0, charts: [], onTheme: null };
-  const ADMIN_RESOURCES = { accounts: '/v1/accounts', summary: '/v1/summary', usage: '/v1/usage', proxies: '/v1/proxies', archived: '/v1/archived-accounts', vendor: '/v1/vendor-usage' };
+  const ADMIN_RESOURCES = { accounts: '/v1/accounts', summary: '/v1/summary', usage: '/v1/usage', proxies: '/v1/proxies', archived: '/v1/archived-accounts', vendor: '/v1/vendor-usage', realtime: '/v1/realtime' };
 
   // ============================================================
   // DOM 工具
@@ -103,6 +103,11 @@
     if (typeof s === 'number') return s;
     const m = String(s).replace(/,/g, '').match(/-?\d+(\.\d+)?/);
     return m ? Number(m[0]) : null;
+  };
+  // 带 k / M / B 后缀的数字（Polo 卡片上的 TPM 如 “1367.5k”）
+  const numK = (s) => {
+    const m = String(s === null || s === undefined ? '' : s).replace(/,/g, '').match(/(-?\d+(?:\.\d+)?)\s*([kKmMbB])?/);
+    return m ? Number(m[1]) * ({ k: 1e3, m: 1e6, b: 1e9 }[(m[2] || '').toLowerCase()] || 1) : null;
   };
   function compact(s) {
     const n = toNum(s);
@@ -696,13 +701,30 @@
         others.length ? h('span', { class: 'chip chip-warn', title: '这些账号使用同一个出口 IP', text: '与 ' + others.join('、') + ' 共用' }) : null));
   }
   // 列表里“并发 / 会话 / 已绑定会话”的说明（电脑悬停、手机点击都能看）
-  const rtHelp = (conc, sessions, slots) => `圆圈里的 ${conc} = 此刻正在发的请求数；会话 ${dash(sessions)} = 此刻活跃的会话；已绑定会话 ${dash(slots)} = Polo 固定分给这个号、还没释放的对话数（同一段对话一直走同一个号），不是正在用的数量，跟额度和结算无关。`;
+  const rtHelp = (conc, sessions, slots) => `圆圈里的 ${conc} = 此刻正在发的请求数（并发，每分钟更新）；会话 ${dash(sessions)} = 此刻活跃的会话；已绑定会话 ${dash(slots)} = Polo 固定分给这个号、还没释放的对话数（同一段对话一直走同一个号），不是正在用的数量，跟额度和结算无关。`;
+  // 每分钟的实时数字（并发 / RPM / TPM / 已绑定会话）；超过 5 分钟没更新就不用，退回 10 分钟快照
+  function liveOf(r) {
+    const rt = S.dash && S.dash.realtime;
+    if (!rt || rt.stale || !rt.data || !rt.data.accounts) return null;
+    return rt.data.accounts[r.account_key] || null;
+  }
+  function liveNums(r) {
+    const d = r.detail || {}, hl = r.health || {}, rt = d.realtime || {}, live = liveOf(r);
+    const has = (x) => x !== null && x !== undefined && x !== '';
+    return {
+      live: !!live,
+      conc: toNum(live && has(live.concurrency) ? live.concurrency : has(rt.concurrency) ? rt.concurrency : hl.concurrency),
+      rpm: live && has(live.rpm) ? live.rpm : rt.rpm,
+      tpm: live && has(live.tpm) ? numK(live.tpm) : toNum(rt.tpm),
+      slots: live && has(live.slots) ? live.slots : hl.session_slots,
+    };
+  }
   function accountRow(r, shared) {
     const d = r.detail || {}, hl = r.health || {}, t = d.today || {}, rt = d.realtime || {}, hs = d.history || {};
     const admin = isAdmin();
     const lastUsed = ago(d.last_used_at) || hl.last_used_display;
     const on = !r.state || r.state === '启用';
-    const conc = toNum(rt.concurrency !== undefined && rt.concurrency !== null ? rt.concurrency : hl.concurrency) || 0;
+    const ln = liveNums(r), conc = ln.conc || 0, slots = ln.slots;
     const old = d.usage_updated_at && Date.now() - toDate(d.usage_updated_at).getTime() > 30 * 60000;
     const meta = [...planText(r), hl.added_at ? `添加 ${fmtShort(hl.added_at)}` : null].filter(Boolean).join(' · ');
     return h('tr', { class: 'lrow' + (on ? '' : ' off') },
@@ -721,10 +743,10 @@
       // 状态 + 实时
       h('td', { 'data-label': '状态 / 实时' },
         h('div', { class: 'l-line' }, statusBadge(r),
-          h('span', { class: 'rt-box', style: { cursor: 'pointer' }, title: rtHelp(conc, rt.sessions, hl.session_slots) + '（点击也能看）', onclick: () => toast(rtHelp(conc, rt.sessions, hl.session_slots), 'info', 8000) },
+          h('span', { class: 'rt-box', style: { cursor: 'pointer' }, title: rtHelp(conc, rt.sessions, slots) + '（点击也能看）', onclick: () => toast(rtHelp(conc, rt.sessions, slots), 'info', 8000) },
             h('b', { class: 'rt-num' + (conc > 0 ? ' live' : ''), text: String(conc) }),
             h('span', { text: `会话 ${dash(rt.sessions)}` }),
-            hl.session_slots !== undefined && hl.session_slots !== null ? h('span', { class: 'faint', text: `· 已绑定会话 ${hl.session_slots}` }) : null)),
+            slots !== undefined && slots !== null ? h('span', { class: 'faint', text: `· 已绑定会话 ${slots}` }) : null)),
         healthBar(r),
         h('div', { class: 'l-line', style: { marginTop: '6px' } }, ipMini(r, shared || {}))),
       // 请求
@@ -735,7 +757,7 @@
           h('span', { class: 'req-k', text: '24H' }), h('span', {},
             h('span', { class: 'pill p-ok', title: '24 小时请求数', text: dash(hl.requests_24h) }),
             h('span', { class: 'pill ' + ((toNum(hl.rate_limits_24h) || 0) > 0 ? 'p-bad' : 'p-mute'), title: '24 小时限流次数', text: dash(hl.rate_limits_24h) })),
-          h('span', { class: 'req-k', text: 'RPM' }), h('span', { class: 'mono small', title: `TPM ${dash(rt.tpm)}`, text: `${dash(rt.rpm)} · TPM ${compact(rt.tpm)}` }))),
+          h('span', { class: 'req-k', text: 'RPM' }), h('span', { class: 'mono small', title: `TPM ${dash(ln.tpm)}${ln.live ? '（每分钟更新）' : ''}`, text: `${dash(ln.rpm)} · TPM ${compact(ln.tpm)}` }))),
       // 额度
       h('td', { 'data-label': '额度窗口' }, quotaRows(r)),
       // 消耗
@@ -901,8 +923,9 @@
         h('thead', {}, h('tr', {}, ['', '请求', 'Token', '费用'].map((x) => h('th', { text: x })))),
         h('tbody', {}, statRow('今日', d.today, 'cost'), statRow('近 5 小时', hs['5h'], 'official_cost'), statRow('近 7 天', hs['7d'], 'official_cost')))),
       h('div', { class: 'ac-sec ac-foot' }, ipLine(r, shared || {}),
-        h('div', { class: 'ac-rt' },
-          h('span', { text: `并发 ${dash(rt.concurrency)}` }), h('span', { text: `RPM ${dash(rt.rpm)}` }), h('span', { text: `TPM ${dash(rt.tpm)}` }), h('span', { text: `会话 ${dash(rt.sessions)}` }),
+        h('div', { class: 'ac-rt' }, ((ln) => [
+          h('span', { text: `并发 ${dash(ln.conc)}` }), h('span', { text: `RPM ${dash(ln.rpm)}` }), h('span', { text: `TPM ${compact(ln.tpm)}` }), h('span', { text: `会话 ${dash(rt.sessions)}` }),
+          ln.slots !== undefined && ln.slots !== null ? h('span', { text: `已绑定 ${ln.slots}` }) : null])(liveNums(r)),
           h('i'), h('span', { title: '最近 24 小时', text: `24h 请求 ${dash(hl.requests_24h)}` }), h('span', { text: `限流 ${dash(hl.rate_limits_24h)}` }), h('span', { text: `成功率 ${dash(hl.success_24h)}` }))));
   }
   const isAbnormal = (r) => (r.state && r.state !== '启用') || (r.detail && ((r.detail.status && r.detail.status !== '正常') || r.detail.cooldown_text || (r.detail.proxy && r.detail.proxy.mode === 'proxy' && r.detail.proxy.health && r.detail.proxy.health !== '可用')));
@@ -954,6 +977,11 @@
     const { main } = appLayout({ active: '#/dashboard', title: '用量看板', desc: admin ? '全部账号的额度、用量与重置时间' : '你可以查看的账号额度、用量与重置时间' });
     const notices = h('div');
     const stats = h('div', { class: 'stats' + (admin ? '' : ' s3') }, skeletonStats(admin ? 8 : 6));
+    // 管理员：实时数字（每分钟从 Polo 读一次，页面每 30 秒取一次）
+    const rtHead = h('div', { class: 'rt-head' });
+    const rtStats = h('div', { class: 'stats rt-stats' }, admin ? skeletonStats(4) : null);
+    const rtBlock = admin ? h('div', { class: 'rt-block' }, rtHead, rtStats) : null;
+    let rtDrawn = false;
     const search = leadInput('search', { class: 'input input-sm has-lead', placeholder: admin ? '搜索账号、邮箱、IP、归属' : '搜索账号、邮箱、IP', type: 'search' });
     search.wrap.style.width = '240px';
     search.wrap.classList.add('dash-search');
@@ -995,7 +1023,7 @@
       h('div', { class: 'skeleton sk-line' }), h('div', { class: 'skeleton sk-line' }), h('div', { class: 'skeleton sk-line', style: { width: '80%' } }))));
     const tableWrap = h('div', { class: 'table-wrap' }, table);
     const listBox = h('div', {}, view === 'card' ? grid : tableWrap);
-    append(main, notices, stats,
+    append(main, notices, rtBlock, stats,
       h('div', { class: 'card' },
         h('div', { class: 'card-head' },
           h('div', { class: 'row wrap' }, h('h2', { class: 'card-title' }, icon('server'), '账号额度'), countText),
@@ -1044,6 +1072,26 @@
       clear(updated, icon('clock', 'icon icon-sm'), `数据采集于 ${fmtTime(a.sampled_at, false)}（${ago(a.sampled_at)}）`,
         a.stale ? h('span', { class: 'badge b-warn', style: { marginLeft: '6px' }, text: '可能已过期' }) : null);
     }
+    function drawRt() {
+      if (!admin || !S.dash) return;
+      const live = S.dash.realtime;
+      const ok = !!(live && live.data && live.data.summary && !live.stale);
+      const m = ok ? live.data.summary : ((S.dash.summary && S.dash.summary.data && S.dash.summary.data.metrics) || {});
+      const at = ok ? live.sampled_at : S.dash.accounts && S.dash.accounts.sampled_at;
+      const cards = [
+        statCard('自身实时并发', m['自身实时并发'], 'activity', 'ok', '我的号 · 当前在飞'),
+        statCard('总池实时并发', m['总池实时并发'], 'bolt', 'purple', '整个号池 · 当前在飞'),
+        statCard('号池可用账号', m['号池可用账号'], 'server', 'cyan', `当前可调度 · 自身 ${dash(m['自身可用账号'])}`),
+        statCard('自身 RPM', m['自身 RPM'], 'trend', 'blue', `总池 ${dash(m['总池 RPM'])} · 最近 60 秒`),
+      ];
+      if (rtDrawn) for (const c of cards) c.style.animation = 'none'; // 定时刷新时不要闪
+      rtDrawn = true;
+      clear(rtStats, cards);
+      clear(rtHead, h('span', { class: 'live-dot' + (ok ? '' : ' off') }), h('b', { text: '实时' }),
+        h('span', { class: 'faint', text: ok ? `每分钟从 Polo 读一次 · ${ago(at) === '刚刚' ? '1 分钟内' : ago(at)}更新`
+          : live && live.stale ? `Polo 那边暂停读取（浏览器正忙，比如结算查询），先显示 ${ago(at) || ''}的快照`
+          : `这次没取到实时数字，30 秒内自动再试；先显示 ${ago(at) || ''}的快照` }));
+    }
     function drawStats() {
       const d = S.dash;
       const rows = (d.accounts && d.accounts.data && d.accounts.data.rows) || [];
@@ -1061,7 +1109,7 @@
           statCard('缓存命中率', m['缓存命中率'], 'bolt', 'ok', '今日 · 上游'),
           statCard('可用账号', m['自身可用账号'], 'server', 'blue', `共 ${rows.length} 个账号`),
           statCard('冷却中', m['自身冷却中'], 'clock', 'warn', `高用量（≥75%）${high} 个`),
-          statCard('今日请求', compact(todayReq), 'activity', 'purple', `RPM ${dash(m['自身 RPM'])} · 总池 ${dash(m['总池 RPM'])}`),
+          statCard('今日请求', compact(todayReq), 'activity', 'purple', '各账号今日合计'),
           statCard('今日 Token', compact(todayTok), 'cube', 'cyan', '各账号今日合计'));
       } else {
         let next = null;
@@ -1167,7 +1215,7 @@
       loading = true;
       refreshBtn.disabled = true; clear(refreshBtn, icon('refresh', 'icon icon-sm spin'), '刷新中');
       try {
-        const keys = admin ? Object.keys(ADMIN_RESOURCES) : ['accounts', 'archived'];
+        const keys = admin ? Object.keys(ADMIN_RESOURCES) : ['accounts', 'archived', 'realtime'];
         const settled = await Promise.allSettled(keys.map((k) => api('GET', ADMIN_RESOURCES[k])));
         if (!S.token) return;
         if (settled.every((x) => x.status === 'rejected')) {
@@ -1178,14 +1226,18 @@
           return;
         }
         S.dash = Object.fromEntries(keys.map((k, i) => [k, settled[i].status === 'fulfilled' ? settled[i].value : null]));
-        whenIdle(() => { if (!listBox.isConnected) return; drawNotices(); drawStats(); drawTable(); drawOps(); });
+        whenIdle(() => { if (!listBox.isConnected) return; drawNotices(); drawRt(); drawStats(); drawTable(); drawOps(); });
       } finally {
         loading = false;
         refreshBtn.disabled = false; clear(refreshBtn, icon('refresh', 'icon icon-sm'), '刷新');
       }
     }
-    S.timers.push(setInterval(() => { if (!document.hidden && S.dash && !busyScrolling()) { drawTable(); if (!admin) drawStats(); } }, 30000));
-    if (S.dash) { drawNotices(); drawStats(); drawTable(); drawOps(); }
+    S.timers.push(setInterval(async () => {
+      if (document.hidden || !S.dash) return;
+      try { S.dash.realtime = await api('GET', ADMIN_RESOURCES.realtime); } catch { /* 保留上一次的 */ }
+      whenIdle(() => { if (!listBox.isConnected) return; drawRt(); drawTable(); if (!admin) drawStats(); });
+    }, 30000));
+    if (S.dash) { drawNotices(); drawRt(); drawStats(); drawTable(); drawOps(); }
     load();
   }
 
