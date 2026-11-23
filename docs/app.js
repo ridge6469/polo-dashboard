@@ -618,7 +618,7 @@
   function resetEl(q, resetText) {
     if (q.reset_at) {
       const left = until(q.reset_at);
-      if (left) return h('span', { class: 'u-reset', title: '重置于 ' + fmtTime(q.reset_at) }, icon('clock', 'icon icon-sm'), left + '后重置');
+      if (left) return h('span', { class: 'u-reset' + (q.by_cool ? ' text-bad' : ''), title: (q.by_cool ? '预计恢复于 ' : '重置于 ') + fmtTime(q.reset_at) }, icon('clock', 'icon icon-sm'), left + (q.by_cool ? '后恢复' : '后重置'));
       return (q.used_pct || 0) > 0 ? h('span', { class: 'u-reset pending', title: '已过重置时间，等待后台刷新用量' }, '待刷新') : h('span', { class: 'u-reset' }, '已重置');
     }
     if (resetText === '重置时间未知' && (q.used_pct || 0) > 0) return h('span', { class: 'u-reset' }, '重置时间未知');
@@ -708,6 +708,38 @@
     if (!rt || rt.stale || !rt.data || !rt.data.accounts) return null;
     return rt.data.accounts[r.account_key] || null;
   }
+  // Polo 卡片上的冷却原因（如 “Anthropic 7d subscription limit rejected (util=1.0) · 10时20分”）：
+  // 优先用每分钟的实时数据，没有就用 10 分钟快照；已过恢复时间的不再算
+  function coolOf(r) {
+    const live = liveOf(r);
+    const c = live && Object.prototype.hasOwnProperty.call(live, 'cooldown') ? live.cooldown : r.cooldown;
+    if (!c) return null;
+    if (c.until && toDate(c.until).getTime() <= Date.now()) return null;
+    return c;
+  }
+  // 把冷却原因里“满了的窗口”合并进额度：Polo 被拒后这个窗口常显示 0%，这里按 util 显示（util=1.0 → 100%），恢复时间当重置时间
+  function applyCooldown(rows) {
+    for (const r of rows) {
+      if (!r.quota_raw) r.quota_raw = r.quota || {};
+      const c = coolOf(r);
+      r.cool = c;
+      r.quota = r.quota_raw;
+      if (!c || !c.window) continue;
+      const key = /^fable/i.test(c.window) ? (Object.keys(r.quota_raw).find((k) => /^fable/i.test(k)) || c.window) : c.window;
+      const base = r.quota_raw[key] || {};
+      const p = c.util === null || c.util === undefined ? 100 : Math.round(c.util * 1000) / 10;
+      r.quota = Object.assign({}, r.quota_raw, { [key]: Object.assign({}, base, {
+        used_pct: Math.max(typeof base.used_pct === 'number' ? base.used_pct : 0, p), status: null, reset_at: c.until || base.reset_at || null, by_cool: true }) });
+    }
+  }
+  const coolWin = (c) => (c && c.window ? (WIN[c.window] ? WIN[c.window].label : c.window) : null);
+  function coolText(c) {
+    if (!c) return null;
+    const w = coolWin(c), left = c.until ? until(c.until) : null;
+    const head = w ? (c.util === null || c.util === undefined || c.util >= 1 ? `${w} 额度已满` : `${w} 额度快满（${Math.round(c.util * 100)}%）`) : '冷却中';
+    return head + (left ? ` · ${left}后恢复` : '');
+  }
+  const coolTitle = (c) => (c ? `Polo 冷却原因：${c.reason}${c.until ? `\n预计恢复：${fmtTime(c.until)}（按 Polo 显示的剩余时间算，精确到分钟）` : ''}` : '');
   function liveNums(r) {
     const d = r.detail || {}, hl = r.health || {}, rt = d.realtime || {}, live = liveOf(r);
     const has = (x) => x !== null && x !== undefined && x !== '';
@@ -739,7 +771,8 @@
           h('span', { class: 'l-name mono', title: '后台显示名', text: dash(r.display_name) })),
         h('div', { class: 'l-sub' }, meta || '—'),
         h('div', { class: 'l-sub' }, lastUsed ? h('span', { title: d.last_used_at ? '最近使用：' + fmtTime(d.last_used_at) : null, text: `${lastUsed}使用` }) : '未使用',
-          d.usage_updated_at ? h('span', { class: old ? 'text-warn' : '', title: '后台最近一次刷新该账号用量：' + fmtTime(d.usage_updated_at) }, ` · 用量 ${ago(d.usage_updated_at)}更新`) : null)),
+          d.usage_updated_at ? h('span', { class: old ? 'text-warn' : '', title: '后台最近一次刷新该账号用量：' + fmtTime(d.usage_updated_at) }, ` · 用量 ${ago(d.usage_updated_at)}更新`) : null),
+        r.cool ? h('div', { class: 'l-cool', title: coolTitle(r.cool) }, icon('clock', 'icon icon-sm'), h('span', { text: coolText(r.cool) })) : null),
       // 状态 + 实时
       h('td', { 'data-label': '状态 / 实时' },
         h('div', { class: 'l-line' }, statusBadge(r),
@@ -790,8 +823,8 @@
         const fill = h('div', { class: 'u-fill uf-' + lv }); fill.style.width = Math.min(100, Math.max(0, p)) + '%';
         const left = q.reset_at ? leftShort(q.reset_at) : null;
         const pend = left === '待刷新' && p > 0;
-        append(box, label, h('div', { class: 'q-track' }, fill), h('span', { class: 'q-pct ' + (lv === 'ok' ? '' : lv), text: pct(p) }),
-          h('span', { class: 'q-left mono' + (pend ? ' text-warn' : ''), title: q.reset_at ? '重置于 ' + fmtTime(q.reset_at) : '重置时间未知', text: left && (left !== '待刷新' || pend) ? left : (left === '待刷新' ? '已重置' : '—') }));
+        append(box, label, h('div', { class: 'q-track' }, fill), h('span', { class: 'q-pct ' + (lv === 'ok' ? '' : lv), title: q.by_cool ? coolTitle(r.cool) : null, text: pct(p) }),
+          h('span', { class: 'q-left mono' + (pend ? ' text-warn' : '') + (q.by_cool ? ' text-bad' : ''), title: q.by_cool ? coolTitle(r.cool) : q.reset_at ? '重置于 ' + fmtTime(q.reset_at) : '重置时间未知', text: left && (left !== '待刷新' || pend) ? left : (left === '待刷新' ? '已重置' : '—') }));
       } else {
         append(box, label, h('span', { class: 'q-note', text: q.status || '未返回独立额度' }));
       }
@@ -806,8 +839,9 @@
   function healthBar(r) {
     const d = r.detail || {}, hl = r.health || {};
     const off = r.state && r.state !== '启用';
-    const st = off ? (r.state || '停用') : (d.cooldown_text ? '冷却中' : d.status === '正常' || !d.status ? '可用' : d.status);
-    const tone = off ? 'gray' : st === '可用' ? 'ok' : /冷却|限流|过载/.test(st) ? 'warn' : 'bad';
+    const c = r.cool !== undefined ? r.cool : coolOf(r);
+    const st = off ? (r.state || '停用') : (c && c.window ? `${coolWin(c)} 已满` : d.cooldown_text || c ? '冷却中' : d.status === '正常' || !d.status ? '可用' : d.status);
+    const tone = off ? 'gray' : st === '可用' ? 'ok' : /冷却|限流|过载|已满/.test(st) ? 'warn' : 'bad';
     const rate = toNum(hl.success_24h);
     const N = 24, good = rate === null || rate === undefined || isNaN(rate) ? N : Math.round((rate / 100) * N);
     const bar = h('div', { class: 'hbar', title: rate === null || rate === undefined || isNaN(rate) ? '近 24 小时没有成功率数据（无请求）' : `近 24 小时成功率 ${hl.success_24h}` });
@@ -917,7 +951,7 @@
           h('div', { title: d.last_used_at ? '最近使用：' + fmtTime(d.last_used_at) : '' }, lastUsed ? `${lastUsed}使用` : '—'),
           d.usage_updated_at ? h('div', { class: old ? 'text-warn' : '', title: '后台最近一次刷新该账号用量：' + fmtTime(d.usage_updated_at) }, `用量 ${ago(d.usage_updated_at)}更新`) : null)),
       tags.length ? h('div', { class: 'chips' }, tags) : null,
-      d.cooldown_text ? h('div', { class: 'notice n-warn', style: { margin: 0, padding: '6px 10px' } }, icon('clock', 'icon icon-sm'), h('span', { text: d.cooldown_text })) : null,
+      (r.cool || d.cooldown_text) ? h('div', { class: 'notice n-warn', style: { margin: 0, padding: '6px 10px' }, title: r.cool ? coolTitle(r.cool) : null }, icon('clock', 'icon icon-sm'), h('span', { text: r.cool ? coolText(r.cool) : d.cooldown_text })) : null,
       h('div', { class: 'ac-sec' }, usageBlock(r, false)),
       h('div', { class: 'ac-sec' }, h('table', { class: 'mini' },
         h('thead', {}, h('tr', {}, ['', '请求', 'Token', '费用'].map((x) => h('th', { text: x })))),
@@ -1038,6 +1072,7 @@
       const d = S.dash;
       if (!d) return;
       const rows = (d.accounts && d.accounts.data && d.accounts.data.rows) || [];
+      applyCooldown(rows);
       const q = search.input.value.trim().toLowerCase();
       let list = rows.filter((r) => !q || [r.display_name, r.email, ipOf(r), r.seat === 'premium' ? 'team 高级' : r.seat === 'standard' ? 'team 标准 普通' : '待标记', admin ? ownerText(r) : '', ...(r.plan || [])].join(' ').toLowerCase().includes(q));
       if (filter === 'high') list = list.filter((r) => maxPct(r) >= 75);
@@ -1095,6 +1130,7 @@
     function drawStats() {
       const d = S.dash;
       const rows = (d.accounts && d.accounts.data && d.accounts.data.rows) || [];
+      applyCooldown(rows);
       const sum = (f) => { let n = 0, any = false; for (const r of rows) { const v = toNum(f(r)); if (v !== null) { n += v; any = true; } } return any ? n : null; };
       const todayReq = sum((r) => r.detail && r.detail.today && r.detail.today.requests);
       const todayTok = sum((r) => r.detail && r.detail.today && r.detail.today.tokens);

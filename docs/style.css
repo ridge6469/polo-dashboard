@@ -902,3 +902,6 @@ tr:hover .nick-btn { opacity: 1; }
 .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 3px rgba(16, 185, 129, .18); flex-shrink: 0; }
 .live-dot.off { background: var(--faint); box-shadow: none; }
 @media (max-width: 760px) { .rt-block .stats { margin-bottom: 10px; } }
+/* 冷却原因（如“7d 额度已满 · 10小时20分后恢复”） */
+.l-cool { display: flex; align-items: center; gap: 5px; margin-top: 5px; font-size: 12px; font-weight: 650; color: var(--warn); white-space: normal; cursor: help; }
+.l-cool .icon { flex-shrink: 0; }
