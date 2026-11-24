@@ -664,7 +664,7 @@
       const hist = k === '5h' ? d.history && d.history['5h'] : k === '7d' ? d.history && d.history['7d'] : null;
       if (withStats && hist && (toNum(hist.requests) || 0) > 0) {
         box.append(h('div', { class: 'u-stats' },
-          h('span', { text: compact(hist.requests) + ' 次' }),
+          h('span', { text: (k === '5h' ? '近5h' : '近7天') + ' · ' + compact(hist.requests) + ' 次' }),
           h('span', { text: compact(hist.tokens) + ' tok' }),
           h('span', { title: `官方价 ${dash(hist.official_cost)} · 计费价 ${dash(hist.billed_cost)}`, text: dash(hist.official_cost) })));
       }
@@ -766,6 +766,13 @@
     return out;
   }
   // 把冷却原因里“满了的窗口”合并进额度：Polo 被拒后这个窗口常显示 0%，这里按 util 显示（util=1.0 → 100%），恢复时间当重置时间
+  function liveReset(api, k, now) {
+    const field = k === '5h' ? '5' : '7';
+    const end = Date.parse(api?.['r' + field]), at = Date.parse(api?.uat);
+    if (!Number.isFinite(api?.['u' + field]) || !Number.isFinite(at) || now-at > 1200000 || at-now > 2000 ||
+        !Number.isFinite(end) || end <= now || end-now > (k === '5h' ? 18000 : 604800)*1000+120000) return null;
+    return api['r'+field];
+  }
   function applyCooldown(rows) {
     for (const r of rows) {
       if (!r.quota_raw) r.quota_raw = r.quota || {};
@@ -779,10 +786,14 @@
         if (!r.quota[k]) continue;
         const cleared = live.api && live.api[k === '5h' ? 'u5' : 'u7'] == null && typeof lp[k] !== 'number';
         const differs = typeof lp[k] === 'number' && typeof r.quota[k].used_pct === 'number' && lp[k] !== r.quota[k].used_pct;
-        if (!differs && !old[k] && !cleared) continue;
+        const reset = liveReset(live.api, k, Date.now());
+        const priorEnd = Date.parse(r.quota[k].reset_at);
+        const resetDiffers = reset && reset !== r.quota[k].reset_at && (!Number.isFinite(priorEnd) || priorEnd <= Date.now() ||
+          Math.abs(Date.parse(reset) - priorEnd) <= (k === '5h' ? 180000 : 3720000));
+        if (!differs && !old[k] && !cleared && !resetDiffers) continue;
         if (r.quota === r.quota_raw) r.quota = Object.assign({}, r.quota_raw);
         r.quota[k] = Object.assign({}, r.quota[k], cleared ? { used_pct: null, status: 'Polo 暂无数据' } : { used_pct: typeof lp[k] === 'number' ? lp[k] : r.quota[k].used_pct },
-          old[k] && !cleared ? { stale: old[k] } : {});
+          resetDiffers ? { reset_at: reset } : {}, old[k] && !cleared ? { stale: old[k] } : {});
       }
       if (c && c.window) {
         const key = /^fable/i.test(c.window) ? (Object.keys(r.quota_raw).find((k) => /^fable/i.test(k)) || c.window) : c.window;
@@ -851,7 +862,7 @@
     if (reached(w)) return fullTitle(w, kind);
     return [w.capacity_change ? '同一窗口内由标准升为高级：升级前曾满，已跑金额不清零。' : null,
       `${kind} 窗口 ${fmtShort(w.start)} – ${fmtShort(w.end)}（按重置时间推算）`,
-      typeof w.usd === 'number' ? `已跑 ${usd4(w.usd)}（所有模型合计，按请求跑完的时刻记）· ${compact(w.requests)} 次请求` + (w.tokens ? ` · ${compact(w.tokens)} tokens` : '') : '正在统计起点以来跑了多少额度…',
+      typeof w.usd === 'number' ? `已跑 ${usd4(w.usd)}（按邮箱汇总本窗所有模型，可含同邮箱已归档记录；与当前记录的滚动消耗不是同一统计范围）· ${compact(w.requests)} 次请求` + (w.tokens ? ` · ${compact(w.tokens)} tokens` : '') : '正在统计起点以来跑了多少额度…',
       w.state === 'live' && w.usd_at ? `算到 ${fmtTime(w.usd_at, false)}（每 15 秒更新，窗口结束后再精确统计）` : QW_STATE[w.state] || '',
       w.missing ? `有 ${w.missing} 段 10 分钟没查到，数字偏小；窗口结束后会精确统计` : '',
       '点击看每个窗口的历史'].filter(Boolean).join('\n');
@@ -861,7 +872,7 @@
     const w = qwOf(r, kind);
     if (!w || reached(w) || r.quota?.[kind]?.used_pct >= 100) return null;  // 已满只显示一笔实际金额，不再并排一笔估算
     return h('a', { class: cls + (w.missing ? ' partial' : '') + (typeof w.usd === 'number' ? '' : ' wait'), href: qwLink(qwKey(r), kind), title: qwTitle(w, kind),
-      onclick: (e) => e.stopPropagation() }, h('b', { text: typeof w.usd === 'number' ? usdS(w.usd) : '…' }), h('span', { class: 'qb-unit', text: '已跑' }));
+      onclick: (e) => e.stopPropagation() }, h('b', { text: typeof w.usd === 'number' ? usdS(w.usd) : '…' }), h('span', { class: 'qb-unit', text: '本窗已跑' }));
   }
   // 未满估算；已满只展示该窗口累计入账，不再展示首次满额时刻的估值。
   function fullCell(r, kind, cls) {
@@ -940,7 +951,7 @@
       h('td', { 'data-label': '请求' },
         h('div', { class: 'req' },
           h('span', { class: 'req-k', text: '今日' }), h('span', {}, h('b', { class: 'mono', text: compact(t.requests) }), h('span', { class: 'faint xs', text: ' req' })),
-          h('span', { class: 'req-k', text: '7D' }), h('span', {}, h('span', { class: 'pill p-ok', title: '最近 7 天请求数', text: compact(hs['7d'] && hs['7d'].requests) })),
+          h('span', { class: 'req-k', text: '近7天' }), h('span', {}, h('span', { class: 'pill p-ok', title: '最近 7 天请求数', text: compact(hs['7d'] && hs['7d'].requests) })),
           h('span', { class: 'req-k', text: '24H' }), h('span', {},
             h('span', { class: 'pill p-ok', title: '24 小时请求数', text: dash(hl.requests_24h) }),
             h('span', { class: 'pill ' + ((toNum(hl.rate_limits_24h) || 0) > 0 ? 'p-bad' : 'p-mute'), title: '24 小时限流次数', text: dash(hl.rate_limits_24h) })),
@@ -950,8 +961,8 @@
       // 消耗
       h('td', { 'data-label': '消耗' },
         h('div', { class: 'cost' },
-          costRow('今日', t.cost, t.tokens), costRow('5H', hs['5h'] && hs['5h'].official_cost, hs['5h'] && hs['5h'].tokens),
-          costRow('7D', hs['7d'] && hs['7d'].official_cost, hs['7d'] && hs['7d'].tokens), costRow('30D', hs['30d'] && hs['30d'].official_cost, hs['30d'] && hs['30d'].tokens, true))),
+          costRow('今日', t.cost, t.tokens), costRow('近5h', hs['5h'] && hs['5h'].official_cost, hs['5h'] && hs['5h'].tokens),
+          costRow('近7天', hs['7d'] && hs['7d'].official_cost, hs['7d'] && hs['7d'].tokens), costRow('近30天', hs['30d'] && hs['30d'].official_cost, hs['30d'] && hs['30d'].tokens, true))),
       h('td', { 'data-label': '', class: 'l-act' }, h('button', { class: 'icon-btn', type: 'button', title: '更多', onclick: (e) => rowMenu(e.currentTarget, r) }, '⋯')));
   }
   function fmtShort(v) {
@@ -991,7 +1002,7 @@
     return box;
   }
   function costRow(k, cost, tok, strong) {
-    return h('div', { class: 'cost-row' + (strong ? ' strong' : '') }, h('span', { class: 'q-k', text: k }), h('span', { class: 'mono', text: dash(cost) }), h('span', { class: 'mono faint', text: tok ? compact(tok) + ' tok' : '—' }));
+    return h('div', { class: 'cost-row' + (strong ? ' strong' : ''), title: '当前 Polo 账号记录的消耗，不合并同邮箱的归档记录' }, h('span', { class: 'q-k', text: k }), h('span', { class: 'mono', text: dash(cost) }), h('span', { class: 'mono faint', text: tok ? compact(tok) + ' tok' : '—' }));
   }
   function healthBar(r) {
     const d = r.detail || {}, hl = r.health || {};
