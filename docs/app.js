@@ -1094,8 +1094,8 @@
   const pctOf = (k) => (r) => (r.quota && r.quota[k] && typeof r.quota[k].used_pct === 'number' ? r.quota[k].used_pct : null);
   const resetOf = (k) => (r) => { const q = r.quota && r.quota[k]; return q && q.reset_at ? toDate(q.reset_at).getTime() : null; };
   const SORTS = {
+    '5h': { label: '5h 用量', type: 'num', fn: pctOf('5h'), desc: false },
     '7d': { label: '7d 用量', type: 'num', fn: pctOf('7d'), desc: true },
-    '5h': { label: '5h 用量', type: 'num', fn: pctOf('5h'), desc: true },
     reset: { label: '5h 重置时间', type: 'time', fn: resetOf('5h'), desc: false },
     reset7: { label: '7d 重置时间', type: 'time', fn: resetOf('7d'), desc: false },
     cost: { label: '今日费用', type: 'num', fn: (r) => toNum(r.detail && r.detail.today && r.detail.today.cost) || 0, desc: true },
@@ -1204,8 +1204,10 @@
     search.wrap.style.width = '240px';
     search.wrap.classList.add('dash-search');
     let filter = 'all';
-    let sortKey = localStorage.getItem('polo_sort') || '7d';
-    if (!SORTS[sortKey]) sortKey = '7d';
+    // 默认按 5h 用量从小到大（剩余额度多的在前）；改过默认后，以前存的排序重置一次
+    if (localStorage.getItem('polo_sort_v') !== '2') { localStorage.setItem('polo_sort', '5h'); localStorage.setItem('polo_sort_dir', 'asc'); localStorage.setItem('polo_sort_v', '2'); }
+    let sortKey = localStorage.getItem('polo_sort') || '5h';
+    if (!SORTS[sortKey]) sortKey = '5h';
     let desc = localStorage.getItem('polo_sort_dir') ? localStorage.getItem('polo_sort_dir') === 'desc' : SORTS[sortKey].desc;
     let showOut = localStorage.getItem('polo_show_weekout') !== '0';
     const seg = h('div', { class: 'seg' });
@@ -1227,6 +1229,33 @@
     paintView();
     sortSel.addEventListener('change', () => { sortKey = sortSel.value; desc = SORTS[sortKey].desc; localStorage.setItem('polo_sort', sortKey); localStorage.setItem('polo_sort_dir', desc ? 'desc' : 'asc'); paintDir(); drawTable(); });
     search.input.addEventListener('input', () => drawTable());
+    // 管理员：按归属筛选（全选 / 我 / 各成员，可多选），记住选择。全选时点某一项 = 只看它；之后再点别的是加选 / 取消
+    let ownSel = null; // null = 全选；否则是选中的 'me' / 'u<成员 id>'
+    try { const v = JSON.parse(localStorage.getItem('polo_owner_sel') || 'null'); if (Array.isArray(v) && v.length) ownSel = v.map(String); } catch { /* 旧值不对就当全选 */ }
+    const ownKeyOf = (r) => (r.owner ? 'u' + r.owner.id : 'me');
+    const ownerBar = admin ? h('div', { class: 'own-bar', role: 'group', 'aria-label': '按归属筛选（可多选）' }) : null;
+    function paintOwners(rows) {
+      if (!ownerBar) return null;
+      const cnt = {}, names = {};
+      for (const r of rows) { const k = ownKeyOf(r); cnt[k] = (cnt[k] || 0) + 1; if (r.owner) names[k] = r.owner.name; }
+      const opts = [['me', '我'], ...Object.keys(names).sort((a, b) => String(names[a]).localeCompare(String(names[b]), 'zh-CN')).map((k) => [k, names[k]])];
+      const live = opts.filter(([k]) => cnt[k]).map(([k]) => k);
+      const sel = ownSel ? ownSel.filter((k) => cnt[k]) : [];
+      const all = !sel.length || live.every((k) => sel.includes(k));
+      const save = () => { if (ownSel) localStorage.setItem('polo_owner_sel', JSON.stringify(ownSel)); else localStorage.removeItem('polo_owner_sel'); };
+      const pick = (k) => {
+        if (all) ownSel = [k];
+        else { const s = new Set(sel); if (s.has(k)) s.delete(k); else s.add(k); ownSel = [...s]; }
+        if (!ownSel.length || live.every((x) => ownSel.includes(x))) ownSel = null;
+        save(); drawTable();
+      };
+      const on = (k) => !all && sel.includes(k);
+      clear(ownerBar, h('span', { class: 'own-lab', text: '归属' }),
+        h('button', { type: 'button', class: 'own-chip' + (all ? ' on' : ''), 'aria-pressed': String(all), title: '显示全部账号', onclick: () => { ownSel = null; save(); drawTable(); } }, '全选', h('i', { text: String(rows.length) })),
+        opts.map(([k, l]) => h('button', { type: 'button', class: 'own-chip' + (k === 'me' ? ' own-me' : '') + (on(k) ? ' on' : ''), 'aria-pressed': String(on(k)), disabled: !cnt[k],
+          title: all ? `只看${k === 'me' ? '我的号' : ' ' + l + ' 的号'}` : on(k) ? '再点一下取消' : '加选', onclick: () => pick(k) }, l, h('i', { text: String(cnt[k] || 0) }))));
+      return all ? null : new Set(sel);
+    }
     const updated = h('span', { class: 'updated' });
     const refreshBtn = h('button', { class: 'btn btn-primary btn-sm', type: 'button' }, icon('refresh', 'icon icon-sm'), '刷新');
     const auto = autoRefreshControl(() => load());
@@ -1247,6 +1276,7 @@
         h('div', { class: 'card-head' },
           h('div', { class: 'row wrap' }, h('h2', { class: 'card-title' }, icon('server'), '账号额度'), countText),
           h('div', { class: 'toolbar dash-tools' }, search.wrap, seg, h('div', { class: 'sort-group' }, sortSel, dirBtn), outToggle, viewSeg)),
+        ownerBar ? h('div', { class: 'card-head own-head' }, ownerBar) : null,
         h('div', { class: 'card-head', style: { borderBottom: '1px solid var(--border)', paddingTop: '10px', paddingBottom: '10px' } },
           updated, h('div', { class: 'toolbar' }, auto.el, refreshBtn)),
         listBox),
@@ -1260,19 +1290,27 @@
       applyCooldown(rows);
       const q = search.input.value.trim().toLowerCase();
       let list = rows.filter((r) => !q || [r.display_name, r.email, ipOf(r), r.seat === 'premium' ? 'team 高级' : r.seat === 'standard' ? 'team 标准 普通' : '待标记', admin ? ownerText(r) : '', ...(r.plan || [])].join(' ').toLowerCase().includes(q));
+      const ownF = paintOwners(rows);
+      if (ownF) list = list.filter((r) => ownF.has(ownKeyOf(r)));
       if (filter === 'high') list = list.filter((r) => maxPct(r) >= 75);
       if (filter === 'abnormal') list = list.filter(isAbnormal);
       const nOut = list.filter(weekOut).length;
       outCount.textContent = `（${nOut}）`;
       if (!showOut) list = list.filter((r) => !weekOut(r));
       const s = SORTS[sortKey];
+      // 一样大时：5h / 7d 互为第二排序（同一方向），再按名称
+      const second = sortKey === '5h' ? pctOf('7d') : sortKey === '7d' ? pctOf('5h') : null;
+      const byName = (a, b) => String(a.display_name || a.email || '').localeCompare(String(b.display_name || b.email || ''), 'zh-CN', { numeric: true });
       list.sort((a, b) => {
         const x = s.fn(a), y = s.fn(b);
-        if (x === null || y === null) return x === y ? 0 : x === null ? 1 : -1; // 没有数据的始终排最后
+        if (x === null || y === null) return x === y ? byName(a, b) : x === null ? 1 : -1; // 没有数据的始终排最后
         const c = typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y), 'zh-CN', { numeric: true });
-        return desc ? -c : c;
+        if (c) return desc ? -c : c;
+        if (second) { const x2 = second(a), y2 = second(b); if (x2 !== y2) return x2 === null ? 1 : y2 === null ? -1 : desc ? y2 - x2 : x2 - y2; }
+        return byName(a, b);
       });
-      countText.textContent = `显示 ${list.length} / ${rows.length} 个${!showOut && nOut ? ` · 已隐藏 ${nOut} 个周额度用完的` : ''}`;
+      const ownTxt = ownF ? ` · 归属筛选中` : '';
+      countText.textContent = `显示 ${list.length} / ${rows.length} 个${!showOut && nOut ? ` · 已隐藏 ${nOut} 个周额度用完的` : ''}${ownTxt}`;
       const shared = sharedIps(rows);
       const empty = () => emptyState(rows.length ? '没有符合条件的账号' : (admin ? '暂无账号数据' : '管理员还没有给你分配账号'));
       if (view === 'card') {
@@ -3000,19 +3038,107 @@
   // ============================================================
   // 我的收益（成员）
   // ============================================================
-  function reportSections(sections) {
-    return sections.map(s=>h('section',{class:'card',style:{marginBottom:'16px'}},h('div',{class:'card-head'},h('h3',{class:'card-title',text:s.title})),
-      s.note?h('div',{class:'card-body muted small',text:s.note}):null,s.rows.length ? h('div',{class:'table-wrap'},h('table',{class:'table responsive'},
-        h('thead',{},h('tr',{},s.columns.map(t=>h('th',{text:t})))),h('tbody',{},s.rows.map(row=>h('tr',{},row.map((v,i)=>h('td',{'data-label':s.columns[i],text:v??'—'}))))))) : h('div',{class:'card-body muted small',text:'暂无记录'})));
+  // 服务器给出每一块显示什么（kpis 概览卡片 / tiles 账号卡片 / chart 图表 / steps 计算步骤 / progress 进度条 / 表格），金额都是写好的文字；
+  // 这里只按类型画，不做任何结算计算。half: true 的相邻两块在宽屏上并排。
+  const RP_ICON = { clock: 'clock', check: 'check', chart: 'chart', trend: 'trend', dollar: 'dollar' };
+  const RP_TONE = { ok: ['#34d399', '#10b981'], warn: ['#fbbf24', '#f59e0b'], bad: ['#f87171', '#ef4444'], blue: ['#60a5fa', '#3b82f6'], purple: ['#a78bfa', '#8b5cf6'] };
+  function rpHead(s, ic) {
+    return h('div', { class: 'card-head' }, h('div', {}, h('h3', { class: 'card-title' }, ic ? icon(ic) : null, s.title), s.note ? h('div', { class: 'faint xs rp-note', text: s.note }) : null));
+  }
+  function rpTable(s) {
+    return h('section', { class: 'card rp-card' }, h('div', { class: 'card-head' }, h('h3', { class: 'card-title', text: s.title })),
+      s.note ? h('div', { class: 'card-body muted small', text: s.note }) : null, (s.rows || []).length ? h('div', { class: 'table-wrap' }, h('table', { class: 'table responsive' },
+        h('thead', {}, h('tr', {}, s.columns.map((t) => h('th', { text: t })))), h('tbody', {}, s.rows.map((row) => h('tr', {}, row.map((v, i) => h('td', { 'data-label': s.columns[i], text: v ?? '—' }))))))) : h('div', { class: 'card-body muted small', text: '暂无记录' }));
+  }
+  function rpChart(s, later) {
+    const el = h('div', { class: 'chart' + (s.kind === 'stack' && !s.half ? ' rp-chart-wide' : '') });
+    later.push(() => {
+      const t = chartTheme(), E = window.echarts, ch = mkChart(el);
+      const f = s.unit === '¥' ? cny : s.unit === '$' ? usd : (v) => String(v), sh = s.unit === '¥' ? shortCny : s.unit === '$' ? shortUsd : (v) => String(v);
+      const col = (x, i) => RP_TONE[x.tone] || [PALETTE[i % PALETTE.length], PALETTE[i % PALETTE.length]];
+      if (s.kind === 'pie') {
+        const data = s.x.map((n, i) => ({ name: n, value: s.series[0].data[i], itemStyle: { color: PALETTE[i % PALETTE.length] } })).filter((d) => d.value > 0);
+        ch.setOption(Object.assign(baseOpt(t), {
+          legend: Object.assign(baseOpt(t).legend, { top: 'auto', bottom: 0 }),
+          tooltip: Object.assign(baseOpt(t).tooltip, { trigger: 'item', formatter: (p) => `<div class="ct-title">${escHtml(p.name)}</div><div class="ct-row"><i class="ct-dot ${dotCls(p.color)}"></i><span>${escHtml(s.series[0].name)}</span><b>${escHtml(f(p.value))}</b></div><div class="ct-row"><span>占比</span><b>${p.percent}%</b></div>` }),
+          title: s.center ? { text: s.center, subtext: s.center_sub || '', left: 'center', top: '36%', textStyle: { color: t.strong, fontSize: 18, fontWeight: 750 }, subtextStyle: { color: t.muted, fontSize: 11 } } : undefined,
+          series: [{ type: 'pie', radius: ['50%', '74%'], center: ['50%', '45%'], avoidLabelOverlap: true, padAngle: 2, itemStyle: { borderRadius: 8, borderColor: t.card, borderWidth: 2 },
+            label: { show: false }, emphasis: { scale: true, scaleSize: 6, label: { show: false } }, data, animationType: 'expansion' }],
+        }));
+        return;
+      }
+      const stack = s.kind === 'stack', many = s.x.length > 4;
+      ch.setOption(Object.assign(baseOpt(t), {
+        tooltip: Object.assign(baseOpt(t).tooltip, { formatter: axisTip({ _: f }, { total: stack && s.series.length > 1 ? (s.total || '合计') : null }) }),
+        xAxis: axisX(t, s.x, { axisLabel: { color: t.muted, fontSize: 11, hideOverlap: true, interval: stack ? 'auto' : 0, rotate: !stack && many && isPhone() ? 30 : 0 } }),
+        yAxis: axisY(t, sh),
+        series: s.series.map((x, i) => ({ name: x.name, type: 'bar', stack: stack ? 'a' : undefined, data: x.data, barMaxWidth: stack ? 28 : 26, barGap: '18%',
+          itemStyle: { color: grad(E, col(x, i)[0], col(x, i)[1]), borderRadius: stack ? 0 : [6, 6, 0, 0] }, emphasis: { focus: 'series' }, animationDelay: (k) => k * 40 })),
+      }));
+    });
+    return h('div', { class: 'card chart-card rp-card' }, rpHead(s, s.kind === 'pie' ? 'cube' : s.unit === '¥' ? 'dollar' : 'chart'), h('div', { class: 'card-body chart-body' }, el));
+  }
+  function rpTiles(s) {
+    const bar = (b) => {
+      if (!b) return null;
+      const track = b.pct === null || b.pct === undefined ? null : (() => { const i = h('i', { class: 'rp-fill rp-f-' + (b.tone || 'blue') }); i.style.width = Math.max(0, Math.min(100, b.pct)) + '%'; return h('div', { class: 'rp-track' }, i); })();
+      return h('div', { class: 'rp-t-bar' }, track, h('span', { text: b.text || '' }));
+    };
+    return h('section', { class: 'card rp-card' }, rpHead(s, 'server'), h('div', { class: 'card-body' }, (s.tiles || []).length ? h('div', { class: 'rp-tiles' }, s.tiles.map((x) => h('div', { class: 'rp-tile' },
+      h('div', { class: 'rp-t-head' }, h('b', { class: 'rp-t-name', text: x.title, title: x.title }),
+        x.badge ? h('span', { class: 'seat ' + (x.badge === '高级' ? 'seat-premium' : 'seat-standard'), text: x.badge }) : null,
+        x.tag ? h('span', { class: 'chip' + (x.tag === '在用' ? ' chip-ok' : ''), text: x.tag }) : null),
+      x.sub ? h('div', { class: 'rp-t-sub', text: x.sub }) : null,
+      h('div', { class: 'rp-t-stats' }, (x.stats || []).map(([l, v, tone]) => h('div', {}, h('small', { text: l }), h('b', { class: tone ? 'text-' + tone : '', text: v })))),
+      bar(x.bar)))) : h('div', { class: 'muted small', text: '还没有分给你的号' })));
+  }
+  function rpSteps(s) {
+    return h('section', { class: 'card rp-card' }, rpHead(s, 'log'), h('div', { class: 'card-body' }, h('div', { class: 'calc', style: { margin: 0 } },
+      (s.rows || []).map(([l, v, sub, tone]) => h('div', { class: 'calc-row' + (tone ? ' ' + tone : '') }, h('div', {}, h('span', { text: l }), sub ? h('small', { text: sub }) : null), h('b', { text: v }))))));
+  }
+  function rpProgress(s) {
+    const total = s.total || 0, track = h('div', { class: 'rbar rp-big' });
+    let used = 0;
+    for (const p of s.parts || []) {
+      const w = total > 0 ? Math.max(0, Math.min(100 - used, (p.value / total) * 100)) : 0;
+      const i = h('i', { class: p.tone === 'pend' ? 'pend' : 'done', title: p.label });
+      i.style.width = w + '%'; used += w; track.append(i);
+    }
+    return h('section', { class: 'card rp-card' }, rpHead(Object.assign({}, s, { note: '' }), 'trend'), h('div', { class: 'card-body' }, track,
+      h('div', { class: 'rp-legend' }, (s.rows || []).map(([l, v], i) => h('div', {}, h('small', {}, h('i', { class: 'rp-dot rp-d' + i }), l), h('b', { text: v })))),
+      s.note ? h('p', { class: 'hint', style: { marginTop: '12px' }, text: s.note }) : null));
+  }
+  function reportSections(sections, later = []) {
+    const one = (s) => {
+      if (s.type === 'kpis') return h('div', { class: 'stats rp-kpis' }, (s.items || []).map((x) => statCard(x.label, x.value, RP_ICON[x.icon] || 'chart', x.tone || 'blue', x.sub)));
+      if (s.type === 'tiles') return rpTiles(s);
+      if (s.type === 'chart') return rpChart(s, later);
+      if (s.type === 'steps') return rpSteps(s);
+      if (s.type === 'progress') return rpProgress(s);
+      return rpTable(s);
+    };
+    const out = [];
+    for (let i = 0; i < sections.length; i++) {
+      const s = sections[i], n = sections[i + 1];
+      if (s.half && n && n.half) { out.push(h('div', { class: 'chart-grid rp-pair' }, one(s), one(n))); i++; } else out.push(one(s));
+    }
+    return out;
   }
   async function pageEarnings() {
     const { main } = appLayout({ active: '#/earnings', title: '我的收益', desc: '你名下账号贡献的额度与结算收入' });
-    const body = h('div', {}, h('div', { class: 'stats' }, skeletonStats(4)));
+    const body = h('div', { class: 'rp-page' }, h('div', { class: 'stats' }, skeletonStats(4)));
     main.append(body);
     let r;
     try { r = await api('GET', '/me/earnings'); } catch (e) { clear(body, emptyState(errText(e), 'warning')); return; }
-    if (!Array.isArray(r.presentation)) { clear(body,emptyState('收益数据暂不可用，请稍后刷新','clock'));return; }
-    clear(body,reportSections(r.presentation));
+    if (!Array.isArray(r.presentation)) { clear(body, emptyState('收益数据暂不可用，请稍后刷新', 'clock')); return; }
+    const later = [];
+    clear(body, reportSections(r.presentation, later));
+    if (!later.length) return;
+    try { await loadECharts(); } catch { return; }
+    if (!body.isConnected) return;
+    const draw = () => { disposeCharts(); later.forEach((fn) => fn()); };
+    S.onTheme = draw;
+    draw();
   }
 
   // ============================================================
