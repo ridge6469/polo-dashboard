@@ -5,7 +5,9 @@
   // ============================================================
   const API = 'https://notes.fuckingclaude.top:8446/polo';
   const SESSION_KEY = 'polo_session';
-  const S = { token: null, user: null, timers: [], dash: null, pending: null, pendingAt: 0, accountsCache: null, accountsAt: 0, charts: [], onTheme: null };
+  const S = { token: null, user: null, timers: [], dash: null, pending: null, pendingAt: 0, accountsCache: null, accountsAt: 0, charts: [], onTheme: null, jobs: 0 };
+  // 本页加载的版本（index.html 里 app.js?v=NN）：发布新版后已打开的页面靠它发现并自动换新版
+  const APP_V = (((document.currentScript && document.currentScript.src) || '').match(/[?&]v=(\d+)/) || [])[1] || null;
   const ADMIN_RESOURCES = { accounts: '/v1/accounts', summary: '/v1/summary', usage: '/v1/usage', proxies: '/v1/proxies', archived: '/v1/archived-accounts', vendor: '/v1/vendor-usage', realtime: '/v1/realtime' };
 
   // ============================================================
@@ -530,7 +532,7 @@
     const sidebar = h('aside', { class: 'sidebar' },
       h('div', { class: 'side-brand' }, h('div', { class: 'logo' }, icon('bolt')), h('div', {}, h('b', { class: 'gradient-text', text: 'Polo 看板' }), h('small', { text: '账号额度与用量' }))),
       nav,
-      h('div', { class: 'side-foot', text: '完整数据约每 3 分钟采集一次，实时数字每 30 秒' }));
+      h('div', { class: 'side-foot', text: '完整数据约每 3 分钟采集一次，实时数字每 15 秒' }));
     const backdrop = h('div', { class: 'backdrop', hidden: true, onclick: () => toggleSide(false) });
     function toggleSide(open) { sidebar.classList.toggle('open', open); backdrop.hidden = !open; }
 
@@ -584,6 +586,24 @@
   for (const ev of ['scroll', 'touchstart', 'touchmove', 'wheel']) window.addEventListener(ev, () => { S.lastTouch = Date.now(); }, { passive: true, capture: true });
   const busyScrolling = () => Date.now() - S.lastTouch < 1500;
   function whenIdle(fn, tries = 0) { if (!busyScrolling() || tries > 20) return fn(); setTimeout(() => whenIdle(fn, tries + 1), 500); }
+  // 用户正在操作（滑动、开着弹窗或菜单、在输入框里、结算任务在跑）：自动刷新和换新版都先等一等。
+  // strict=false（换新版用）：输入框只是自动获得了焦点、里面是空的、一分钟内没打字，不算在操作
+  for (const ev of ['input', 'keydown']) window.addEventListener(ev, () => { S.lastType = Date.now(); }, { passive: true, capture: true });
+  const editing = (strict) => {
+    const a = document.activeElement;
+    if (!a || !/^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName)) return false;
+    return strict || !!a.value || Date.now() - (S.lastType || 0) < 60000;
+  };
+  const userBusy = (strict = true) => busyScrolling() || !!document.querySelector('.modal-overlay, .menu') || (S.jobs || 0) > 0 || editing(strict);
+  // 页面自动取新数据：在前台、没在操作时，每隔 ms 调一次 fn（切回这个标签页时如果已经超过 ms，几秒内补一次）。离开页面自动停。
+  function autoRefresh(fn, ms) {
+    let last = Date.now(), running = false;
+    S.timers.push(setInterval(async () => {
+      if (running || document.hidden || Date.now() - last < ms || userBusy()) return;
+      running = true; last = Date.now();
+      try { await fn(); } catch { /* 下一次再试 */ } finally { running = false; }
+    }, Math.min(ms, 5000)));
+  }
   function howTo(title, ...content) {
     return h('details', { class: 'howto', open: !isPhone() }, h('summary', {}, h('b', { text: title }), h('span', { class: 'howto-tip', text: '点开看说明' })), ...content);
   }
@@ -619,6 +639,12 @@
     return f ? h('span', { class: 'chip chip-warn', title: `标记为标准席位，但后台显示 Fable 已用 ${pct(f[1].used_pct)}，可能已升级为高级席位`, text: 'Fable 有用量' }) : null;
   }
 
+  // Polo 暂时清空了用量数据，这里显示的是上次的真实值：标一下（手机上点一下看说明）
+  function staleTag(q) {
+    if (!q || !q.stale) return null;
+    const tip = `Polo 暂时清空了这个号的用量数据（打满冷却期间常见，卡片上会显示 0%）。这里显示的是 ${fmtTime(q.stale.at)} Polo 最后一次给出的真实值；冷却期间号用不了，这个值不会变，冷却结束后会自动刷新。`;
+    return h('span', { class: 'q-stale', title: tip, onclick: (e) => { e.stopPropagation(); if (isPhone()) toast(tip, 'info', 9000); } }, 'Polo 未更新');
+  }
   function resetEl(q, resetText) {
     if (q.reset_at) {
       const left = until(q.reset_at);
@@ -650,7 +676,7 @@
         append(row, h('div', { class: 'u-track' }, fill), h('span', { class: 'u-pct ' + (lv === 'ok' ? '' : lv), text: pct(p) }));
         // 第二行：本窗口已跑 · 用满预测 · 重置时间（放不下就换行，不会压在一起）
         const subs = [QW_KINDS.includes(k) ? qwCell(r, k, 'u-usd') : null, QW_KINDS.includes(k) ? fullCell(r, k, 'u-usd') : null,
-          resetEl(q, d.windows && d.windows[k] && d.windows[k].reset_text)].filter(Boolean);
+          resetEl(q, d.windows && d.windows[k] && d.windows[k].reset_text), staleTag(q)].filter(Boolean);
         box.append(h('div', { class: 'u-q' }, row, subs.length ? h('div', { class: 'u-sub' }, subs) : null));
         continue;
       } else if (q.status) {
@@ -710,7 +736,7 @@
         others.length ? h('span', { class: 'chip chip-warn', title: '这些账号使用同一个出口 IP', text: '与 ' + others.join('、') + ' 共用' }) : null));
   }
   // 列表里“并发 / 会话 / 已绑定会话”的说明（电脑悬停、手机点击都能看）
-  const rtHelp = (conc, sessions, slots) => `并发 ${conc} = 此刻正在发的请求数（每 30 秒更新）；会话 ${dash(sessions)} = 此刻活跃的会话；已绑定会话 ${dash(slots)} = Polo 固定分给这个号、还没释放的对话数（同一段对话一直走同一个号），不是正在用的数量，跟额度和结算无关。`;
+  const rtHelp = (conc, sessions, slots) => `并发 ${conc} = 此刻正在发的请求数（每 15 秒更新）；会话 ${dash(sessions)} = 此刻活跃的会话；已绑定会话 ${dash(slots)} = Polo 固定分给这个号、还没释放的对话数（同一段对话一直走同一个号），不是正在用的数量，跟额度和结算无关。`;
   // 醒目的“并发 N”标签：手机列表（cls='mob'）和卡片视图用；大于 0 时用渐变蓝
   function concPill(r, cls = '') {
     const ln = liveNums(r), n = ln.conc || 0, rt = (r.detail && r.detail.realtime) || {};
@@ -718,7 +744,7 @@
     return h('span', { class: 'conc-pill' + (n > 0 ? ' live' : '') + (cls ? ' ' + cls : ''), title: tip, onclick: (e) => { e.stopPropagation(); toast(tip, 'info', 8000); } },
       h('small', { text: '并发' }), h('b', { text: String(n) }));
   }
-  // 每 30 秒的实时数字（并发 / RPM / TPM / 已绑定会话 / 5h、7d %）；超过 5 分钟没更新就不用，退回采集快照
+  // 每 15 秒的实时数字（并发 / RPM / TPM / 已绑定会话 / 5h、7d %）；超过 5 分钟没更新就不用，退回采集快照
   function liveOf(r) {
     const rt = S.dash && S.dash.realtime;
     if (!rt || rt.stale || !rt.data || !rt.data.accounts) return null;
@@ -746,13 +772,17 @@
       const c = coolOf(r);
       r.cool = c;
       r.quota = r.quota_raw;
-      // 每 30 秒的实时读数里有卡片上的 5h / 7d %：比快照新，就用它
-      const lp = (liveOf(r) || {}).pct || {};
+      // 每 15 秒的实时读数里有卡片上的 5h / 7d %：比快照新，就用它。
+      // Polo 清空了用量数据（卡片显示 0%）：服务器给的是同一窗口里上次的真实值（pct_old 注明时刻）；连上次的也没有就显示“暂无数据”，不显示 0%
+      const live = liveOf(r) || {}, lp = live.pct || {}, old = live.pct_old || {};
       for (const k of QW_KINDS) {
-        if (typeof lp[k] === 'number' && r.quota[k] && typeof r.quota[k].used_pct === 'number' && lp[k] !== r.quota[k].used_pct) {
-          if (r.quota === r.quota_raw) r.quota = Object.assign({}, r.quota_raw);
-          r.quota[k] = Object.assign({}, r.quota[k], { used_pct: lp[k] });
-        }
+        if (!r.quota[k]) continue;
+        const cleared = live.api && live.api[k === '5h' ? 'u5' : 'u7'] == null && typeof lp[k] !== 'number';
+        const differs = typeof lp[k] === 'number' && typeof r.quota[k].used_pct === 'number' && lp[k] !== r.quota[k].used_pct;
+        if (!differs && !old[k] && !cleared) continue;
+        if (r.quota === r.quota_raw) r.quota = Object.assign({}, r.quota_raw);
+        r.quota[k] = Object.assign({}, r.quota[k], cleared ? { used_pct: null, status: 'Polo 暂无数据' } : { used_pct: typeof lp[k] === 'number' ? lp[k] : r.quota[k].used_pct },
+          old[k] && !cleared ? { stale: old[k] } : {});
       }
       if (c && c.window) {
         const key = /^fable/i.test(c.window) ? (Object.keys(r.quota_raw).find((k) => /^fable/i.test(k)) || c.window) : c.window;
@@ -795,7 +825,7 @@
     return w;
   }
   const usdS = (v) => (v === null || v === undefined || isNaN(v) ? '—' : '$' + (Math.abs(v) >= 1000 ? Math.round(v).toLocaleString('en-US') : Math.abs(v) >= 100 ? v.toFixed(0) : v.toFixed(Math.abs(v) >= 10 ? 1 : 2)));
-  const QW_STATE = { final: '已结束 · 精确值', ended: '已结束 · 长请求跑完、结束 40 分钟后出精确值', live: '进行中 · 每 30 秒更新', pending: '刚发现，正在统计起点以来的额度' };
+  const QW_STATE = { final: '已结束 · 精确值', ended: '已结束 · 长请求跑完、结束 40 分钟后出精确值', live: '进行中 · 每 15 秒更新', pending: '刚发现，正在统计起点以来的额度' };
   // 用满预测：服务器在 Polo 刷新用量 % 的那一刻算“已跑 ÷ %”；本窗口用量太低时用以往窗口的中位数。老数据没有时按结束时的 % 算
   const FULL_SRC = { now: '按本窗口推算', cur: '按当前已跑和最近一次百分比粗估', actual: '本窗实跑', waiting: '待核实', hist: '按这个号以往的窗口', pool: '按同席位全部号以往的窗口' };
   const reached = w => !!(w && (w.rejected_at || w.last_pct >= 100 || ['actual', 'waiting', 'rejected'].includes(w.full?.src)));
@@ -822,7 +852,7 @@
     return [w.capacity_change ? '同一窗口内由标准升为高级：升级前曾满，已跑金额不清零。' : null,
       `${kind} 窗口 ${fmtShort(w.start)} – ${fmtShort(w.end)}（按重置时间推算）`,
       typeof w.usd === 'number' ? `已跑 ${usd4(w.usd)}（所有模型合计，按请求跑完的时刻记）· ${compact(w.requests)} 次请求` + (w.tokens ? ` · ${compact(w.tokens)} tokens` : '') : '正在统计起点以来跑了多少额度…',
-      w.state === 'live' && w.usd_at ? `算到 ${fmtTime(w.usd_at, false)}（每 30 秒更新，窗口结束后再精确统计）` : QW_STATE[w.state] || '',
+      w.state === 'live' && w.usd_at ? `算到 ${fmtTime(w.usd_at, false)}（每 15 秒更新，窗口结束后再精确统计）` : QW_STATE[w.state] || '',
       w.missing ? `有 ${w.missing} 段 10 分钟没查到，数字偏小；窗口结束后会精确统计` : '',
       '点击看每个窗口的历史'].filter(Boolean).join('\n');
   }
@@ -914,7 +944,7 @@
           h('span', { class: 'req-k', text: '24H' }), h('span', {},
             h('span', { class: 'pill p-ok', title: '24 小时请求数', text: dash(hl.requests_24h) }),
             h('span', { class: 'pill ' + ((toNum(hl.rate_limits_24h) || 0) > 0 ? 'p-bad' : 'p-mute'), title: '24 小时限流次数', text: dash(hl.rate_limits_24h) })),
-          h('span', { class: 'req-k', text: 'RPM' }), h('span', { class: 'mono small', title: `TPM ${dash(ln.tpm)}${ln.live ? '（每 30 秒更新）' : ''}`, text: `${dash(ln.rpm)} · TPM ${compact(ln.tpm)}` }))),
+          h('span', { class: 'req-k', text: 'RPM' }), h('span', { class: 'mono small', title: `TPM ${dash(ln.tpm)}${ln.live ? '（每 15 秒更新）' : ''}`, text: `${dash(ln.rpm)} · TPM ${compact(ln.tpm)}` }))),
       // 额度
       h('td', { 'data-label': '额度窗口' }, quotaRows(r)),
       // 消耗
@@ -950,7 +980,7 @@
         const top = h('div', { class: 'qr-top' }, label, h('div', { class: 'q-track' }, fill), h('span', { class: 'q-pct ' + (lv === 'ok' ? '' : lv), title: q.by_cool ? coolTitle(r.cool) : null, text: pct(p) }),
           h('span', { class: 'q-left mono' + (pend ? ' text-warn' : '') + (q.by_cool ? ' text-bad' : ''), title: q.by_cool ? coolTitle(r.cool) : q.reset_at ? '重置于 ' + fmtTime(q.reset_at) : '重置时间未知', text: left && (left !== '待刷新' || pend) ? left : (left === '待刷新' ? '已重置' : '—') }));
         // 第二行：本窗口已跑 · 用满预测（放不下就换行）
-        const subs = QW_KINDS.includes(k) ? [qwCell(r, k, 'q-usd'), fullCell(r, k, 'q-usd')].filter(Boolean) : [];
+        const subs = QW_KINDS.includes(k) ? [qwCell(r, k, 'q-usd'), fullCell(r, k, 'q-usd'), staleTag(q)].filter(Boolean) : [];
         box.append(h('div', { class: 'qr' }, top, subs.length ? h('div', { class: 'qr-sub' }, subs) : null));
       } else {
         box.append(h('div', { class: 'qr' }, h('div', { class: 'qr-top' }, label, h('span', { class: 'q-note', text: q.status || '未返回独立额度' }))));
@@ -1144,7 +1174,7 @@
     append(main, h('div', { class: 'card' }, h('div', { class: 'card-head' },
       h('h2', { class: 'card-title' }, icon('activity'), '每日并发'), h('div', { class: 'toolbar' }, today, dateInput)),
       h('div', { class: 'card-body' }, stats, note, plot,
-        h('p', { class: 'hint', text: '来自 Polo 的「总池实时并发」，约每 30 秒采样一次。每 5 分钟显示样本平均和最高在飞数；没有读数的时段留空，不算作 0。' }))),
+        h('p', { class: 'hint', text: '来自 Polo 的「总池实时并发」，约每 15 秒采样一次。每 5 分钟显示样本平均和最高在飞数；没有读数的时段留空，不算作 0。' }))),
       h('div', { class: 'card', style: { marginTop: '16px' } }, h('div', { class: 'card-head' }, h('h2', { class: 'card-title' }, icon('log'), '近七天对照')),
         h('div', { class: 'table-wrap' }, h('table', { class: 'mini-table' }, h('thead', {}, h('tr', {}, ['日期', '平均并发', '采样峰值', '样本数'].map((s) => h('th', { text: s })))), days))));
     const num = (v) => v == null ? '—' : v.toLocaleString('zh-CN');
@@ -1177,7 +1207,7 @@
         clear(stats, statCard(d.day === d.today && !stale ? '最新并发' : '末次并发', num(d.last), 'bolt', 'purple', d.last_at ? hhmm(d.last_at) + ' 采样' : '暂无采样'),
           statCard('当天平均', num(d.avg), 'activity', 'blue', `${num(d.count)} 次采样`),
           statCard('当天峰值', num(d.peak), 'trend', 'ok', d.peak_at ? hhmm(d.peak_at) + ' 首次达到' : '暂无采样'));
-        note.textContent = !d.count ? `${d.day} 还没有采样记录。` : stale ? '采样暂未更新，显示最后一次真实读数。' : `${d.day} · 最新样本 ${hhmm(d.last_at)}${choice === 'today' ? ' · 每 30 秒自动更新' : ''}`;
+        note.textContent = !d.count ? `${d.day} 还没有采样记录。` : stale ? '采样暂未更新，显示最后一次真实读数。' : `${d.day} · 最新样本 ${hhmm(d.last_at)}${choice === 'today' ? ' · 每 15 秒自动更新' : ''}`;
         clear(days, d.days.length ? d.days.map((r) => h('tr', {}, h('td', {}, h('button', { class: 'btn btn-ghost btn-sm', type: 'button', onclick: () => select(r.day === d.today ? 'today' : r.day) }, r.day)),
           ...[r.avg, r.peak, r.count].map((v) => h('td', { text: num(v) })))) : h('tr', {}, h('td', { colspan: '4', text: '这七天没有采样记录' })));
         plot.hidden = !d.count;
@@ -1186,7 +1216,7 @@
     }
     dateInput.addEventListener('change', () => { if (dateInput.value && dateInput.validity.valid) select(dateInput.value === dateInput.max ? 'today' : dateInput.value); });
     S.onTheme = draw;
-    S.timers.push(setInterval(() => { if (choice === 'today' && !document.hidden) load(); }, 30000));
+    S.timers.push(setInterval(() => { if (choice === 'today' && !document.hidden) load(); }, 15000));
     load();
   }
 
@@ -1195,7 +1225,7 @@
     const { main } = appLayout({ active: '#/dashboard', title: '用量看板', desc: admin ? '全部账号的额度、用量与重置时间' : '你可以查看的账号额度、用量与重置时间' });
     const notices = h('div');
     const stats = h('div', { class: 'stats' + (admin ? '' : ' s3') }, skeletonStats(admin ? 8 : 6));
-    // 管理员：实时数字（每分钟从 Polo 读一次，页面每 30 秒取一次）
+    // 管理员：实时数字（每 15 秒从 Polo 读一次，页面每 5 秒取一次，没变就不重画）
     const rtHead = h('div', { class: 'rt-head' });
     const rtStats = h('div', { class: 'stats rt-stats' }, admin ? skeletonStats(4) : null);
     const rtBlock = admin ? h('div', { class: 'rt-block' }, rtHead, rtStats) : null;
@@ -1346,7 +1376,7 @@
       rtDrawn = true;
       clear(rtStats, cards);
       clear(rtHead, h('span', { class: 'live-dot' + (ok ? '' : ' off') }), h('b', { text: '实时' }),
-        h('span', { class: 'faint', text: ok ? `每 30 秒从 Polo 读一次 · ${ago(at) === '刚刚' ? '刚刚' : ago(at)}更新`
+        h('span', { class: 'faint', text: ok ? `每 15 秒从 Polo 读一次 · ${ago(at) === '刚刚' ? '刚刚' : ago(at)}更新`
           : live && live.stale ? `Polo 那边暂停读取（浏览器正忙，比如结算查询），先显示 ${ago(at) || ''}的快照`
           : `这次没取到实时数字，15 秒内自动再试；先显示 ${ago(at) || ''}的快照` }));
     }
@@ -1493,12 +1523,19 @@
         refreshBtn.disabled = false; clear(refreshBtn, icon('refresh', 'icon icon-sm'), '刷新');
       }
     }
+    // 实时数字每 15 秒从 Polo 读一次：这里每 5 秒取一次，有新读数才重画；已跑额度每 15 秒取一次
     S.timers.push(setInterval(async () => {
       if (document.hidden || !S.dash) return;
-      try { S.dash.realtime = await api('GET', ADMIN_RESOURCES.realtime); } catch { /* 保留上一次的 */ }
-      if (Date.now() - (S.qwAt || 0) > 28000) await loadQw();
+      let changed = false;
+      try {
+        const r = await api('GET', ADMIN_RESOURCES.realtime);
+        changed = !S.dash.realtime || r.sampled_at !== S.dash.realtime.sampled_at || r.stale !== S.dash.realtime.stale;
+        if (changed) S.dash.realtime = r;
+      } catch { /* 保留上一次的 */ }
+      if (Date.now() - (S.qwAt || 0) > 14000) { await loadQw(); changed = true; }
+      if (!changed) return;
       whenIdle(() => { if (!listBox.isConnected) return; drawRt(); drawTable(); if (!admin) drawStats(); });
-    }, 15000));
+    }, 5000));
     if (S.dash) { drawNotices(); drawRt(); drawStats(); drawTable(); drawOps(); }
     load();
   }
@@ -1583,7 +1620,7 @@
             r.health_status ? h('div', { style: { marginTop: '4px' } }, h('span', { class: 'chip', text: r.health_status })) : null));
       }));
     }
-    async function load() {
+    async function load(quiet) {
       refresh.disabled = true;
       try {
         res = await api('GET', '/v1/archived-accounts');
@@ -1593,9 +1630,11 @@
         clear(notice, res.data && res.data.complete === false ? h('div', { class: 'notice n-warn' }, icon('warning'), h('span', { text: '后台归档列表没有读全，显示的不是全部归档账号。' })) : null);
         drawStats(); draw();
       } catch (e) {
+        if (quiet) return;  // 自动刷新失败：留着上一次的
         clear(stats); clear(tbody, h('tr', {}, h('td', { colspan: '7' }, emptyState(errText(e), 'warning'))));
       } finally { refresh.disabled = false; }
     }
+    autoRefresh(() => load(true), 60000);
     load();
   }
 
@@ -1701,7 +1740,7 @@
     // 并发、每个请求带的 token 和缓存、额度的关系（按 % 每变一次的“步”统计）
     function drawConc() {
       const C = cdata.conc && cdata.conc[ckind], out = [h('h4', { text: '并发、上下文和缓存' })];
-      out.push(h('p', { class: 'faint xs', text: '每一步 = Polo 刷新一次用量 %（约 10 分钟一次）且 % 变了。平均并发 = 这一步里这个号同时在跑的请求数（每 30 秒读一次）；每请求 token = 全部 token ÷ 请求数，就是每次请求带的上下文大小（含缓存）。各号额度大小不同，“每 1% 额度跑的钱”都换成“是这个号自己平均的几倍”再比（表里灰色是美元原值）。' + (cdata.conc_since ? `从 ${fmtTime(cdata.conc_since)} 开始记录并发。` : '') }));
+      out.push(h('p', { class: 'faint xs', text: '每一步 = Polo 刷新一次用量 %（约 10 分钟一次）且 % 变了。平均并发 = 这一步里这个号同时在跑的请求数（每 15 秒读一次）；每请求 token = 全部 token ÷ 请求数，就是每次请求带的上下文大小（含缓存）。各号额度大小不同，“每 1% 额度跑的钱”都换成“是这个号自己平均的几倍”再比（表里灰色是美元原值）。' + (cdata.conc_since ? `从 ${fmtTime(cdata.conc_since)} 开始记录并发。` : '') }));
       if (!C || C.n < 10) {
         out.push(h('p', { text: `数据还不够：现在有 ${C ? C.n : 0} 步带并发数据，至少要 10 步。号跑起来以后每小时会多几步。` }));
         return clear(cConc, out);
@@ -1959,7 +1998,7 @@
         ov = o;
         if (ch) cdata = ch;
         clear(err);
-        since.textContent = `从 ${fmtTime(ov.since)} 开始记录（之前的窗口没有数据）` + (ov.last_slice_end ? `；精确切片到 ${fmtTime(ov.last_slice_end, false)}，之后按每 30 秒的读数补上` : '') + (ov.error ? '；最近一次查询没成功，会自动重试' : '');
+        since.textContent = `从 ${fmtTime(ov.since)} 开始记录（之前的窗口没有数据）` + (ov.last_slice_end ? `；精确切片到 ${fmtTime(ov.last_slice_end, false)}，之后按每 15 秒的读数补上` : '') + (ov.error ? '；最近一次查询没成功，会自动重试' : '');
         const ks = keysOf();
         if (!ks.includes(key)) key = ks[0] || '';
         drawOv(); paintPick(); drawCache();
@@ -2047,14 +2086,17 @@
   function fmtSec(v) { if (v === null || v === undefined) return '—'; const d = toDate(v); return isNaN(d) ? '—' : d.toLocaleString('sv-SE', { timeZone: 'Asia/Shanghai', hour12: false }); }
   async function pollJob(jid, onTick) {
     const t0 = Date.now();
-    for (;;) {
-      const j = await api('GET', '/admin/settle/job/' + jid);
-      if (j.status === 'done') return j.result;
-      if (j.status === 'error') throw new ApiError(502, j.error || 'query_failed', j.error_info || {});
-      if (onTick) onTick(j.status, Math.round((Date.now() - t0) / 1000));
-      if (Date.now() - t0 > 330000) throw new ApiError(504, 'query_timeout');
-      await new Promise((r) => setTimeout(r, 1200));
-    }
+    S.jobs = (S.jobs || 0) + 1;  // 任务在跑：自动刷新 / 换新版先等一等
+    try {
+      for (;;) {
+        const j = await api('GET', '/admin/settle/job/' + jid);
+        if (j.status === 'done') return j.result;
+        if (j.status === 'error') throw new ApiError(502, j.error || 'query_failed', j.error_info || {});
+        if (onTick) onTick(j.status, Math.round((Date.now() - t0) / 1000));
+        if (Date.now() - t0 > 330000) throw new ApiError(504, 'query_timeout');
+        await new Promise((r) => setTimeout(r, 1200));
+      }
+    } finally { S.jobs = Math.max(0, S.jobs - 1); }
   }
   function barChart(points, { fmt = usd, sub } = {}) {
     const max = Math.max(0.0001, ...points.map((p) => p.value || 0));
@@ -2154,6 +2196,18 @@
       else if (tab === 'history') await settleHistory(body);
       else await settleSettings(body);
     } catch (e) { clear(body, emptyState(errText(e), 'warning')); }
+    // 待结算 / 结算记录：每分钟在后台重新取一遍，内容变了才换上（展开的明细和滚动位置保持）。
+    // 开着弹窗、在输入、结算任务在跑时不换；上家结算（有图表）和设置（表单）不自动刷新
+    if (tab === 'pending' || tab === 'history') autoRefresh(async () => {
+      const fresh = h('div');
+      await (tab === 'pending' ? settlePending(fresh) : settleHistory(fresh));
+      if (!body.isConnected || userBusy() || fresh.textContent === body.textContent) return;
+      const opened = new Set([...body.querySelectorAll('details[open] > summary')].map((s) => s.textContent));
+      const y = window.scrollY;
+      body.replaceChildren(...fresh.childNodes);
+      for (const s of body.querySelectorAll('details > summary')) if (opened.has(s.textContent)) s.parentElement.open = true;
+      window.scrollTo(0, y);
+    }, 60000);
   }
 
   // ---------- 回本（公共） ----------
@@ -2283,7 +2337,7 @@
     });
     const head = h('div', { class: 'card', style: { marginBottom: '16px' } }, h('div', { class: 'card-body period' },
       h('div', {}, howTo('怎么结算',
-        h('div', { class: 'hint', text: `点某位成员的“结算”，系统会算出他名下每个号从上次结算点到该成员约定截止时间的额度（实时，或北京时间昨天 23:59:59）：用 Polo 卡片上“今日”的读数相减（每 30 秒记一次，按请求跑完的时刻记，和网页上的数一致），没有读数的时段再向 Polo「用量统计」查。算出应付多少人民币（可换成 USDT）；确认后自动写入结算点，下次从下一秒接着算。一天可以结算多次，不会重复、不会漏（结算时还在跑的长请求，跑完后算在下一次）。` })),
+        h('div', { class: 'hint', text: `点某位成员的“结算”，系统会算出他名下每个号从上次结算点到该成员约定截止时间的额度（实时，或北京时间昨天 23:59:59）：用 Polo 卡片上“今日”的读数相减（每 15 秒记一次，按请求跑完的时刻记，和网页上的数一致），没有读数的时段再向 Polo「用量统计」查。算出应付多少人民币（可换成 USDT）；确认后自动写入结算点，下次从下一秒接着算。一天可以结算多次，不会重复、不会漏（结算时还在跑的长请求，跑完后算在下一次）。` })),
         h('div', { class: 'faint xs', style: { marginTop: '4px' }, text: st.pending ? `卡片上的金额是预估（${ago(st.pending.at)}查询，每 15 分钟自动更新）${st.refreshing ? '，正在更新…' : ''}` : '预估生成中…' })),
       h('div', { class: 'toolbar' }, refreshBtn)));
     const grid = ms.length ? h('div', { class: 'mgrid' }, ms.map((m, i) => { const c = memberCard(m, st, info, unpaidBy[m.user_id], rate, reload); c.style.animationDelay = i * 40 + 'ms'; return c; }))
@@ -3131,14 +3185,26 @@
     let r;
     try { r = await api('GET', '/me/earnings'); } catch (e) { clear(body, emptyState(errText(e), 'warning')); return; }
     if (!Array.isArray(r.presentation)) { clear(body, emptyState('收益数据暂不可用，请稍后刷新', 'clock')); return; }
-    const later = [];
-    clear(body, reportSections(r.presentation, later));
-    if (!later.length) return;
-    try { await loadECharts(); } catch { return; }
-    if (!body.isConnected) return;
+    let later = [], sig = '';
     const draw = () => { disposeCharts(); later.forEach((fn) => fn()); };
-    S.onTheme = draw;
-    draw();
+    const show = async (p) => {
+      sig = JSON.stringify(p); later = [];
+      clear(body, reportSections(p, later));
+      if (!later.length) return;
+      try { await loadECharts(); } catch { return; }
+      if (!body.isConnected) return;
+      S.onTheme = draw;
+      draw();
+    };
+    await show(r.presentation);
+    // 每分钟自动取一次（本期预估服务器每 15 分钟更新），内容变了才重画，滚动位置不动
+    autoRefresh(async () => {
+      const n = await api('GET', '/me/earnings');
+      if (!body.isConnected || !Array.isArray(n.presentation) || JSON.stringify(n.presentation) === sig) return;
+      const y = window.scrollY;
+      await show(n.presentation);
+      window.scrollTo(0, y);
+    }, 60000);
   }
 
   // ============================================================
@@ -3281,13 +3347,13 @@
     reloadBtn.addEventListener('click', () => load());
     S.onTheme = () => { if (data) draw(); };
 
-    async function load() {
+    async function load(quiet) {
       const my = ++seq;
-      paintSeg(); fIn.value = range[0]; tIn.value = range[1];
-      reloadBtn.disabled = true;
+      if (!quiet) { paintSeg(); fIn.value = range[0]; tIn.value = range[1]; reloadBtn.disabled = true; }
       try {
         const [d] = await Promise.all([api('GET', `/admin/settle/stats/${range[0]}/${range[1]}`), loadECharts()]);
         if (my !== seq) return;
+        if (quiet && data && JSON.stringify(d) === JSON.stringify(data)) return;  // 自动刷新：数据没变就不重画
         data = d;
         rememberUsers(d.users);
         localStorage.setItem('polo_stats_min', d.stats_from || '');
@@ -3302,9 +3368,11 @@
         }
         paintScope();
         draw();
-      } catch (e) { if (my === seq) clear(body, h('div', { class: 'card' }, h('div', { class: 'card-body' }, emptyState(errText(e), 'warning')))); }
-      finally { if (my === seq) reloadBtn.disabled = false; }
+      } catch (e) { if (my === seq && !quiet) clear(body, h('div', { class: 'card' }, h('div', { class: 'card-body' }, emptyState(errText(e), 'warning')))); }
+      finally { if (my === seq && !quiet) reloadBtn.disabled = false; }
     }
+    // 统计范围包含今天：每 2 分钟自动取一次（服务器每 15 分钟更新今天的数）
+    autoRefresh(() => (range[1] >= bjToday() ? load(true) : null), 120000);
 
     function draw() {
       disposeCharts();
@@ -3917,6 +3985,25 @@
   loadSession();
   window.addEventListener('hashchange', render);
   render();
+  // 发布了新版：每 5 分钟看一眼 index.html 里的版本号，变了就在用户没在操作时自动刷新整个页面（10 分钟内最多一次）
+  if (APP_V) {
+    let want = null;
+    const reloadWhenIdle = () => {
+      if (userBusy(false) && !document.hidden) return setTimeout(reloadWhenIdle, 10000);
+      const last = Number(sessionStorage.getItem('polo_vreload') || 0);
+      if (Date.now() - last < 600000) return;
+      sessionStorage.setItem('polo_vreload', String(Date.now()));
+      location.reload();
+    };
+    setInterval(async () => {
+      if (want) return;
+      try {
+        const html = await (await fetch(location.pathname + '?vc=' + Date.now(), { cache: 'no-store' })).text();
+        const v = (html.match(/app\.js\?v=(\d+)/) || [])[1];
+        if (v && Number(v) > Number(APP_V)) { want = v; reloadWhenIdle(); }
+      } catch { /* 下次再看 */ }
+    }, 300000);
+  }
   if (S.token) {
     api('GET', '/me').then((me) => {
       if (!S.user) return;
