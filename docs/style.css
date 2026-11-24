@@ -1079,3 +1079,24 @@ tr:hover .nick-btn { opacity: 1; }
   .table.responsive tr.rec-acc-row > td::before { display: none; }
   .rec-accts { grid-template-columns: 1fr; gap: 8px; }
 }
+
+/* ---- 未结算 / 昨日收益 ---- */
+.mc-extra { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 6px; }
+.mc-x { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border-radius: 10px; background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--border); min-width: 0; cursor: default; }
+.mc-x small { font-size: 11.5px; color: var(--muted); }
+.mc-x b { font-size: 16px; font-variant-numeric: tabular-nums; }
+.mc-x span { font-size: 11px; color: var(--faint); line-height: 1.4; font-variant-numeric: tabular-nums; }
+.yd-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.yd-main { display: flex; flex-direction: column; gap: 6px; min-width: 0; flex: 1 1 320px; }
+.yd-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-weight: 700; font-size: 14px; }
+.yd-title .faint { font-weight: 400; }
+.yd-amt { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.yd-amt b { font-size: 24px; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+.yd-amt span:not(.chip) { color: var(--muted); font-size: 13px; }
+.yd-amt .chip { align-self: center; }
+.yd-row .toolbar .btn[disabled] { opacity: .5; cursor: not-allowed; }
+@media (max-width: 760px) {
+  .yd-row .toolbar { width: 100%; }
+  .yd-row .toolbar .btn { width: 100%; justify-content: center; }
+  .yd-amt b { font-size: 21px; }
+}

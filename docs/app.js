@@ -2381,12 +2381,21 @@
     btn.addEventListener('click', () => settlePreview(m, st, reload));
     const last = m.last ? `上次结算 ${ago(m.last.created_at)}（截至 ${fmtSec(m.last.end_at).slice(5)}）` : '还没结算过';
     const amt = (label, v, cls) => h('div', { class: 'mc-amt' }, h('small', { text: label }), h('b', { class: cls || '', text: v }));
+    // 未结算（到现在）/ 昨日收益：实时结算的成员应付就是未结算；隔日结算的应付是截至昨天的，另列未结算到现在
+    const ex = m.valid ? m.extra : null;
+    const xItem = (label, v, sub, tip) => h('div', { class: 'mc-x', title: tip || null }, h('small', { text: label }), h('b', { text: v }), sub ? h('span', { text: sub }) : null);
+    const yState = (y) => Math.abs(y.usd) < 0.00005 ? '昨天没有额度' : Math.abs(y.pending_cny) < 0.005 ? '已全部结算' : Math.abs(y.settled_cny) < 0.005 ? '还没结算' : `已结 ${cny(y.settled_cny)} · 待结 ${cny(y.pending_cny)}`;
+    const extra = ex ? h('div', { class: 'mc-extra' },
+      m.prior_day ? xItem('未结算（到现在）', cny(ex.now.member_cny), `额度 ${usd(ex.now.usd)} · 截至 ${fmtSec(ex.now.cutoff).slice(11, 16)}`, `到现在前 2 分钟还没结算的全部（含今天）；我的抽成 ${cny(ex.now.admin_cny)}`) : null,
+      xItem(`昨日 ${ex.yday.day.slice(5)}`, cny(ex.yday.member_cny), `额度 ${usd(ex.yday.usd)} · ${yState(ex.yday)}`,
+        `北京时间 ${ex.yday.day} 一整天给成员的钱（不含调整项）；我的抽成 ${cny(ex.yday.admin_cny)}${ex.yday.approx ? '\n部分按「用量统计」估算' : ''}`)) : null;
     const parts = m.valid ? [
       h('div', { class: 'mc-range', text: m.start ? `待结算 ${fmtSec(m.start)} → ${fmtSec(m.cutoff)}` : '暂时没有待结算的时间段' }),
       h('div', { class: 'mc-amts' }, amt('额度', usd(r2(L.usd + L.adjust_usd))), amt('毛收入', cny(L.gross_cny)),
         amt('回本·不分成', L.recover_cny ? cny(L.recover_cny) : '—', L.recover_cny ? 'text-warn' : 'faint'), amt(L.income_label || '我的抽成', cny(L.admin_cny))),
-      h('div', { class: 'mc-pay' }, h('div', {}, h('small', { text: '应付（预估）' }), h('div', { class: 'mc-big', text: cny(L.member_cny) })),
+      h('div', { class: 'mc-pay' }, h('div', {}, h('small', { text: m.prior_day ? '今天结算 · 应付（截至昨天）' : '未结算收益 · 应付（预估）' }), h('div', { class: 'mc-big', text: cny(L.member_cny) })),
         rate && L.member_cny ? h('div', { class: 'mc-usdt', text: `≈ ${usdtFmt(r2(L.member_cny / rate.rate))}` }) : null),
+      extra,
       lineRecovery(L),
     ] : [h('div', { class: 'loading-box small' }, icon('refresh', 'icon icon-sm spin'), h('span', { text: '预估更新中；点“结算”会直接精确查询' }))];
     const up = (st.up_points || [])[0];
@@ -2541,18 +2550,36 @@
     const pTot = p ? p.usd + carry : null;
     const act = st.points.filter((x) => x.status === 'active');
     const last = act[0] || null;
-    const est = (u) => (set.up_price ? curFmt(r2(u * set.up_price), set.up_currency) : null);
+    // 估算收入：填了上家单价就用它，没填就按最近一次收款的单价
+    const pe = st.price_est || {};
+    const estM = (u) => (pe.price ? `≈ ${curFmt(r2(u * pe.price), pe.currency)}${pe.src === 'last' ? '（按上次收款单价）' : ''}` : null);
+    const y = st.yday;
     const carryTxt = Math.abs(carry) >= 0.00005 ? ` · 含上次结转 ${usd4(carry)}` : '';
     const notes = [];
     if (!p) notes.push(['n-info', 'refresh', '待结算数据正在更新（约半分钟），稍后点“刷新”。']);
     if (p && p.unmatched && p.unmatched.length) notes.push(['n-warn', 'warning', `有 ${p.unmatched.length} 个 Polo 账号没对应到邮箱（${p.unmatched.map((x) => `${x.name} ${usd(x.usd)}`).join('、')}），算在“我的号”里。`]);
     const recvTxt = Object.entries(sd.received).map(([k, v]) => curFmt(v, k)).join(' + ');
     const stats = h('div', { class: 'stats' },
-      statCard('待结算（上家）', p ? usd(pTot) : '—', 'clock', 'warn', p ? `我的号 ${usd(p.mine_usd)} · 成员号 ${usd(p.members_usd)}${carryTxt}${est(pTot) ? ` · 预计 ${est(pTot)}` : ''}` : '更新中'),
-      statCard('已结算（上家）', usd(sd.usd), 'check', 'ok', `${sd.count} 次${Math.abs(sd.polo_usd - sd.usd) >= 0.00005 ? ` · Polo 实际 ${usd4(sd.polo_usd)}` : ''} · 我的号 ${usd(sd.mine_usd)} · 成员号 ${usd(sd.members_usd)}`),
-      statCard('累计总额度', usd(sd.polo_usd + (p ? p.usd : 0)), 'chart', 'blue', `从 ${fmtSec(set.up_start).slice(0, 16)} 起（所有成员 + 我的号）`),
+      statCard('未结算收益（上家）', p ? usd(pTot) : '—', 'clock', 'warn', p ? `截至 ${fmtSec(p.end).slice(5, 16)} · 我的号 ${usd(p.mine_usd)} · 成员号 ${usd(p.members_usd)}${carryTxt}${estM(pTot) ? ` · ${estM(pTot)}` : ''}` : '更新中'),
+      statCard(y ? `昨日收益（${y.day.slice(5)}）` : '昨日收益', y ? usd(y.usd) : '—', 'chart', 'blue', y ? `全天 · 我的号 ${usd(y.mine_usd)} · 成员号 ${usd(y.members_usd)}${estM(y.usd) ? ` · ${estM(y.usd)}` : ''} · ${y.status === 'settled' ? '已结算' : y.status === 'partial' ? '部分已结算' : '未结算'}` : '正在计算'),
+      statCard('已结算（上家）', usd(sd.usd), 'check', 'ok', `${sd.count} 次${Math.abs(sd.polo_usd - sd.usd) >= 0.00005 ? ` · Polo 实际 ${usd4(sd.polo_usd)}` : ''} · 我的号 ${usd(sd.mine_usd)} · 成员号 ${usd(sd.members_usd)} · 累计总额度 ${usd(sd.polo_usd + (p ? p.usd : 0))}`),
       statCard('已收款', recvTxt || '—', 'dollar', 'purple', last ? `上次结算点 ${fmtSec(last.end_at).slice(5, 16)}` : '还没有结算点'));
-    const addBtn = h('button', { class: 'btn btn-primary btn-sm', type: 'button', onclick: () => upstreamAddModal(st, info, reload) }, icon('plus', 'icon icon-sm'), '添加结算点');
+    // 昨日收益：上家每天结算前一天（「用量统计」按天 00:00:00 – 23:59:59）；点按钮 = 按时间结算到昨天 23:59:59
+    const ydBtn = h('button', { class: 'btn btn-primary', type: 'button', disabled: !(y && y.can_settle && y.status !== 'settled'),
+      onclick: () => upstreamAddModal(st, info, reload, { time: y.settle_to, title: `结算昨日收益（${y.day}）` }) }, icon('check', 'icon icon-sm'), '结算昨日收益');
+    const ydNote = !y ? '昨天的数正在向 Polo 查询…'
+      : y.status === 'settled' ? `✓ 昨天（${y.day}）已经结算${y.rest ? `（结到 ${fmtSec(y.settle_from - 1).slice(11)}，之后 Polo 额度 ${usd4(y.rest.usd)}）` : ''}。`
+        : !y.final ? '「用量统计」里昨天的长请求还会晚到，凌晨 1 点以后才能结算（现在的数还可能涨一点）。'
+          : y.status === 'partial' ? `昨天已经结到 ${fmtSec(y.settle_from - 1).slice(11)}，剩下 ${y.rest ? usd4(y.rest.usd) : '—'} 没结。点“结算昨日收益”结到昨天 23:59:59。`
+            : `昨天还没结算。点“结算昨日收益”就把到昨天 23:59:59 的记成一次上家结算${y.before && y.before.usd >= 0.005 ? `；另外 ${fmtSec(y.before.start).slice(5, 16)} 起还有 ${usd4(y.before.usd)} 没结，会一起结算` : ''}。`;
+    const ydCard = h('div', { class: 'card yd-card', style: { marginBottom: '16px' } }, h('div', { class: 'card-body yd-row' },
+      h('div', { class: 'yd-main' },
+        h('div', { class: 'yd-title' }, icon('chart', 'icon icon-sm'), y ? `昨日收益 · ${y.day}` : '昨日收益', h('span', { class: 'faint xs', text: '北京时间 00:00:00 – 23:59:59，按「用量统计」按天，和上家网页的数一致' })),
+        h('div', { class: 'yd-amt' }, h('b', { text: y ? usd4(y.usd) : '—' }), y && estM(y.usd) ? h('span', { text: estM(y.usd) }) : null,
+          y ? h('span', { class: 'chip ' + (y.status === 'settled' ? 'chip-ok' : 'chip-warn'), text: y.status === 'settled' ? '已结算' : y.status === 'partial' ? '部分已结算' : '未结算' }) : null),
+        h('div', { class: 'faint xs', text: ydNote })),
+      h('div', { class: 'toolbar' }, ydBtn)));
+    const addBtn = h('button', { class: 'btn btn-secondary btn-sm', type: 'button', onclick: () => upstreamAddModal(st, info, reload) }, icon('plus', 'icon icon-sm'), '添加结算点');
     const refBtn = h('button', { class: 'btn btn-secondary btn-sm', type: 'button' }, icon('refresh', 'icon icon-sm'), '刷新');
     refBtn.addEventListener('click', async () => {
       refBtn.disabled = true; clear(refBtn, icon('refresh', 'icon icon-sm spin'), '正在向 Polo 查询…');
@@ -2561,7 +2588,7 @@
     });
     const head = h('div', { class: 'card', style: { marginBottom: '16px' } }, h('div', { class: 'card-body period' },
       h('div', {}, howTo('怎么用',
-        h('div', { class: 'hint', text: '上家按整个号池（所有成员的号 + 你自己的号）的总额度给你结算。收到钱后点“添加结算点”，输入这次结算了多少额度（或累计额度、或时间），系统会向 Polo 查出这个额度是在哪一秒达到的，结算点就记在那一秒（不是你录入的时间），下一段从下一秒开始。之后再到“成员待结算”给成员结算，可以选“结算到上家结算点”。' })),
+        h('div', { class: 'hint', text: '上家按整个号池（所有成员的号 + 你自己的号）的总额度给你结算。上家每天结算前一天的：凌晨 1 点以后点上面的“结算昨日收益”，系统按时间结算到昨天 23:59:59（金额和上家网页按天查的一致）。也可以点“添加结算点”，输入这次结算了多少额度（或累计额度、或时间），系统会向 Polo 查出这个额度是在哪一秒达到的，结算点就记在那一秒，下一段从下一秒开始。之后再到“成员待结算”给成员结算，可以选“结算到上家结算点”。' })),
         h('div', { class: 'faint xs', style: { marginTop: '4px' }, text: p ? `待结算数字 ${ago(p.at)}查询，每 15 分钟自动更新${st.refreshing ? '，正在更新…' : ''}` : '' })),
       h('div', { class: 'toolbar' }, refBtn, addBtn)));
     // 图表
@@ -2573,7 +2600,7 @@
         h('div', { class: 'faint xs', text: '每次上家结算里：我的号 / 各成员的号各占多少（最后一根是待结算）' }))), h('div', { class: 'card-body chart-body' }, el2))));
     // 待结算
     const pend = h('div', { class: 'card', style: { marginBottom: '16px' } },
-      h('div', { class: 'card-head' }, h('div', {}, h('h3', { class: 'card-title' }, icon('clock'), '待结算（上家）'),
+      h('div', { class: 'card-head' }, h('div', {}, h('h3', { class: 'card-title' }, icon('clock'), '未结算（上家）'),
         p ? h('div', { class: 'faint xs', text: `${fmtSec(p.start)} → ${fmtSec(p.end)} · Polo 新增 ${usd(p.usd)}（我的号 ${usd(p.mine_usd)} · 成员号 ${usd(p.members_usd)}）${Math.abs(carry) >= 0.00005 ? ` ${carry > 0 ? '+' : '−'} 上次结转 ${usd4(Math.abs(carry))} = ${usd(pTot)}` : ''}` }) : null)),
       h('div', { class: 'card-body' }, p ? splitTable(p, info, p.coverage) : emptyState('更新中…', 'clock')));
     // 结算点记录
@@ -2629,7 +2656,7 @@
         field('第一段从（北京时间）', startIn, set.locked ? '已经有结算点，不能再改' : '上家从什么时候开始算；Polo 在 11-20 之前没有数据'),
         field('上家单价（每 $1 额度）', priceIn, '填了会估算待收款，并自动填收款金额'),
         field('单价币种', curSel)));
-    clear(body, notes.map(([k, i, t]) => h('div', { class: 'notice ' + k }, icon(i), h('span', { text: t }))), stats, head, charts, pend, hist, sets);
+    clear(body, notes.map(([k, i, t]) => h('div', { class: 'notice ' + k }, icon(i), h('span', { text: t }))), stats, ydCard, head, charts, pend, hist, sets);
     const draw = () => { disposeCharts(); upstreamCharts(st, el1, el2); };
     S.onTheme = draw;
     draw();
@@ -2690,14 +2717,15 @@
     }));
   }
 
-  function upstreamAddModal(st, info, reload) {
+  function upstreamAddModal(st, info, reload, preset) {
     const p = st.pending, sd = st.settled, set = st.settings, carry = st.carry || 0;
     const pTot = p ? p.usd + carry : null;
-    let mode = 'amount', jobId = null, res = null, seq = 0;
+    const pe = st.price_est || {};
+    let mode = preset ? 'time' : 'amount', jobId = null, res = null, seq = 0;
     const seg = h('div', { class: 'seg' });
     const amt = h('input', { class: 'input mono', type: 'number', step: '0.0001', min: '0', placeholder: p ? '例如 ' + Math.floor(pTot) : '例如 3000' });
     const cum = h('input', { class: 'input mono', type: 'number', step: '0.0001', min: '0', placeholder: '例如 ' + Math.floor(sd.polo_usd + (p ? p.usd : 0)) });
-    const tIn = h('input', { class: 'input mono', type: 'datetime-local', step: '1', value: toBjInput(Math.floor(Date.now() / 1000) - 300) });
+    const tIn = h('input', { class: 'input mono', type: 'datetime-local', step: '1', value: toBjInput(preset ? preset.time : Math.floor(Date.now() / 1000) - 300) });
     const findBtn = h('button', { class: 'btn btn-primary btn-sm', type: 'button' }, icon('search', 'icon icon-sm'), '查找达成时间');
     const inputBox = h('div'), resBox = h('div');
     const recv = h('input', { class: 'input', type: 'number', step: '0.01', min: '0', placeholder: '可不填' });
@@ -2728,6 +2756,7 @@
         if (my !== seq) return;
         jobId = r.job_id; res = out;
         if (set.up_price && recv.value === '') { recv.value = r2(res.book_usd * set.up_price); recvCur.value = set.up_currency; }
+        else if (!set.up_price && pe.price) { recv.placeholder = `约 ${r2(res.book_usd * pe.price)} ${pe.currency === 'USDT' ? 'USDT' : '元'}（按上次收款单价估算，可不填）`; if (recv.value === '') recvCur.value = pe.currency || 'CNY'; }
         const diff = res.need !== null && res.need !== undefined ? `；Polo 要跑到 ${usd4(res.need)}，跨过它的那一条请求多出 ${usd4(res.diff)}` : '';
         const ca = res.carry_after;
         const caTxt = Math.abs(ca) < 0.00005 ? '记账和 Polo 实际一致，没有结转。'
@@ -2761,7 +2790,7 @@
         clear(resBox, h('div', { class: 'notice n-bad' }, icon('warning'), h('span', { text: msg })));
       } finally { findBtn.disabled = false; }
     });
-    modal({ title: '添加上家结算点', wide: true,
+    modal({ title: preset ? preset.title : '添加上家结算点', wide: true,
       body: h('div', {}, h('div', { class: 'row wrap until-row' }, h('span', { class: 'label', text: '怎么算' }), seg), inputBox, resBox,
         h('div', { class: 'grid-half', style: { marginTop: '14px' } }, field('上家付了多少（可不填）', h('div', { class: 'row', style: { gap: '8px' } }, recv, recvCur)), field('备注', note)),
         h('p', { class: 'hint', text: '先点“查找达成时间”，确认无误再添加。结算点记在额度达成的那一秒；点错了可以撤销最近一个。' })),
@@ -2769,9 +2798,10 @@
         if (!res) { toast('先点“查找达成时间”', 'bad'); return false; }
         try {
           const r = await api('POST', '/admin/settle/up/commit', { job_id: jobId, received: recv.value === '' ? null : Number(recv.value), currency: recvCur.value, note: note.value });
-          toast(`已添加结算点：记账 ${usd4(r.usd)}，达成于 ${fmtSec(r.end_at)}`, 'ok'); reload();
+          toast(`已添加结算点：记账 ${usd4(r.usd)}，${mode === 'time' ? '结算到' : '达成于'} ${fmtSec(r.end_at)}`, 'ok'); reload();
         } catch (e) { toast(errText(e), 'bad'); if (['stale_preview', 'preview_expired'].includes(e.code)) { reload(); return; } return false; }
       } }] });
+    if (preset) findBtn.click();  // 结算昨日收益：打开就查好，确认即可
   }
 
   function upstreamEditModal(x, reload) {
