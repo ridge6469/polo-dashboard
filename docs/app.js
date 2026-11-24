@@ -1079,12 +1079,14 @@
   const RECOVER_OUT = { recovered: '已恢复', already_ok: '本来就正常', still_full: '确实满了，没清', partial: 'Polo 还显示冷却', failed: '没恢复' };
   const RECOVER_WHY = { usage_refresh_failed: '刷新用量失败（刷新 Token 后也不行）', usage_not_updated: '官方用量没有更新', not_found: 'Polo 上找不到这个号',
     disabled: '号已停用，不处理', page_not_ready: 'Polo 页面没准备好', reload_failed: '刷新后读不到账号数据', clear_cooldown_failed: '清空本地冷却失败',
-    clear_error_failed: '清除错误失败', expired: '排队太久，已放弃', timeout: '超时没有结果' };
+    clear_error_failed: '清除错误失败', expired: '排队太久，已放弃', timeout: '超时没有结果',
+    not_proxy_error: '不是代理报错，没清', proxy_blocked: 'Polo 判定绑定代理不可用，没清' };
   const RECOVER_STEP = { 'refresh-usage': '刷新用量', refresh: '刷新 Token（普通）', 'clear-cooldown': '清空本地冷却', 'clear-error': '清除错误' };
   function recoverText(a) {
     if (!a.done_at) return '排队中…';
     const use = a.usage ? Object.entries(a.usage).filter(([k]) => k === '5h' || k === '7d').map(([k, v]) => `${k} ${Math.round(v)}%`).join(' · ') : '';
-    return (RECOVER_OUT[a.outcome] || a.outcome) + (a.reason ? '：' + (RECOVER_WHY[a.reason] || a.reason) : '') +
+    const out = a.mode === 'clear-error' ? ({ recovered: '已清除错误', already_ok: '错误已经没了', partial: '清了，Polo 还显示错误' }[a.outcome] || RECOVER_OUT[a.outcome]) : RECOVER_OUT[a.outcome];
+    return (out || a.outcome) + (a.reason ? '：' + (RECOVER_WHY[a.reason] || a.reason) : '') +
       (a.outcome === 'still_full' && a.full ? `（${a.full.join('、')} 已满）` : '') + (use ? `；官方用量 ${use}` : '');
   }
   const recoverSteps = (a) => (a.steps || []).map((s) => `${RECOVER_STEP[s.step] || s.step}：${s.ok ? '成功' : '失败' + (s.status ? ' ' + s.status : '') + (s.error ? ' ' + s.error : '')}`).join('\n');
@@ -1441,9 +1443,13 @@
       const rows = (d.accounts && d.accounts.data && d.accounts.data.rows) || [];
       applyCooldown(rows);
       const sum = (f) => { let n = 0, any = false; for (const r of rows) { const v = toNum(f(r)); if (v !== null) { n += v; any = true; } } return any ? n : null; };
-      const todayReq = sum((r) => r.detail && r.detail.today && r.detail.today.requests);
-      const todayTok = sum((r) => r.detail && r.detail.today && r.detail.today.tokens);
-      const todayCost = sum((r) => r.detail && r.detail.today && r.detail.today.cost);
+      // 今天跑过、后来归档的号（不在列表里了）今天已经跑的量：服务器按它们最后一次卡片读数给（gone_today），一并算进今日合计
+      const gone = (d.accounts && d.accounts.data && d.accounts.data.gone_today) || null;
+      const plus = (v, g) => (g ? (v || 0) + g : v);
+      const todayReq = plus(sum((r) => r.detail && r.detail.today && r.detail.today.requests), gone && gone.requests);
+      const todayTok = plus(sum((r) => r.detail && r.detail.today && r.detail.today.tokens), gone && gone.tokens);
+      const todayCost = plus(sum((r) => r.detail && r.detail.today && r.detail.today.cost), gone && gone.cost);
+      const goneNote = gone && gone.n ? `（含今天归档的 ${gone.n} 个号）` : '';
       const high = rows.filter((r) => maxPct(r) >= 75).length;
       if (admin) {
         const m = (d.summary && d.summary.data && d.summary.data.metrics) || {};
@@ -1454,8 +1460,8 @@
           statCard('缓存命中率', m['缓存命中率'], 'bolt', 'ok', '今日 · 上游'),
           statCard('可用账号', m['自身可用账号'], 'server', 'blue', `共 ${rows.length} 个账号`),
           statCard('冷却中', m['自身冷却中'], 'clock', 'warn', `高用量（≥75%）${high} 个`),
-          statCard('今日请求', compact(todayReq), 'activity', 'purple', '各账号今日合计'),
-          statCard('今日 Token', compact(todayTok), 'cube', 'cyan', '各账号今日合计'));
+          statCard('今日请求', compact(todayReq), 'activity', 'purple', '各账号今日合计' + goneNote),
+          statCard('今日 Token', compact(todayTok), 'cube', 'cyan', '各账号今日合计' + goneNote));
       } else {
         let next = null;
         for (const r of rows) for (const k of quotaKeys(r)) {
@@ -1464,9 +1470,9 @@
         }
         clear(stats,
           statCard('我的账号', rows.length, 'server', 'blue', d.accounts && d.accounts.data && d.accounts.data.missing && d.accounts.data.missing.length ? `${d.accounts.data.missing.length} 个暂无数据` : '管理员分配'),
-          statCard('今日请求', compact(todayReq), 'activity', 'purple'),
-          statCard('今日 Token', compact(todayTok), 'cube', 'cyan'),
-          statCard('今日费用', money(todayCost), 'dollar', 'ok', '官方价合计'),
+          statCard('今日请求', compact(todayReq), 'activity', 'purple', goneNote ? goneNote.slice(1, -1) : undefined),
+          statCard('今日 Token', compact(todayTok), 'cube', 'cyan', goneNote ? goneNote.slice(1, -1) : undefined),
+          statCard('今日费用', money(todayCost), 'dollar', 'ok', '官方价合计' + goneNote),
           statCard('高用量账号', high, 'warning', high ? 'warn' : 'ok', '任一窗口 ≥75%'),
           statCard('最近一次重置', next ? until(next.at) + '后' : '—', 'clock', 'blue', next ? `${next.name} · ${(WIN[next.k] || { label: next.k }).label}` : '暂无重置时间'));
       }
@@ -1534,7 +1540,7 @@
       const names = {};
       for (const r of (accRes && accRes.data && accRes.data.rows) || []) if (r.account_key) names[r.account_key.toLowerCase()] = r.display_name || r.email;
       const list = ((res && res.actions) || []).slice(0, 8);
-      const sw = res ? h('button', { class: 'btn btn-secondary btn-xs', type: 'button', title: 'Polo 因 5h / 7d 额度满了冷却着、但冷却后刷到的官方用量明显没满（比如升级了席位）时，自动恢复；同一个号 1 小时最多一次',
+      const sw = res ? h('button', { class: 'btn btn-secondary btn-xs', type: 'button', title: '自动恢复：Polo 因 5h / 7d 额度满了冷却着、但冷却后刷到的官方用量明显没满（比如升级了席位）时自动恢复，同一个号 1 小时最多一次；\n号显示代理报错、但代理测试「可用」时自动清除错误，同一个号 30 分钟最多一次、一天最多 6 次',
         onclick: async (e) => {
           const b = e.currentTarget; b.disabled = true;
           try { const o = await api('POST', '/admin/accounts/recover/auto', { on: !res.auto }); res.auto = o.auto; toast(o.auto ? '已打开自动恢复' : '已关闭自动恢复', 'ok'); drawOps(); }
@@ -1545,7 +1551,7 @@
           : h('div', { class: 'rec-list' }, list.map((a) => h('div', { class: 'small', style: { padding: '4px 0', borderBottom: '1px solid var(--border)' }, title: recoverSteps(a) + (a.note ? '\n' + a.note : '') },
             h('span', { class: 'faint', text: fmtTime(a.requested_at, false) + ' ' }),
             h('b', { text: names[a.account_key] || a.account_key }),
-            h('span', { class: 'chip', style: { marginLeft: '6px' }, text: a.why === 'auto' ? '自动' : '手动' }),
+            h('span', { class: 'chip', style: { marginLeft: '6px' }, text: a.why === 'auto' ? (a.mode === 'clear-error' ? '自动 · 代理报错' : '自动') : '手动' }),
             h('div', { class: a.outcome === 'recovered' || a.outcome === 'already_ok' ? '' : 'faint', text: recoverText(a) }))));
       return h('div', { class: 'card' },
         h('div', { class: 'card-head' }, h('h3', { class: 'card-title' }, icon('refresh'), '账号恢复'), sw),
@@ -1948,12 +1954,17 @@
 
     const nm = (k) => (names[k] && names[k].name) || keyText(k);
     const sub = (k) => (names[k] && names[k].email) || '';
+    // 不在当前账号列表里（已归档 / 删除）：窗口停在离开时，不再显示剩余、用满预测
+    const gone = (k) => order.length > 0 && !order.includes(k);
     const keysOf = () => { const a = (ov && ov.accounts) || {}; return [...order.filter((k) => a[k]), ...Object.keys(a).filter((k) => !order.includes(k)).sort()]; };
     const stateText = (w) => (w.state === 'final' ? '已结束 · 精确' : w.state === 'ended' ? '已结束 · 精确统计中' : w.state === 'live' ? '进行中' + (w.missing ? ` · 缺 ${w.missing} 段` : '') : '统计中');
     const span = (w) => { const s = fmtShort(w.start), e = fmtShort(w.end); return s.slice(0, 5) === e.slice(0, 5) ? `${s} → ${e.slice(6)}` : `${s} → ${e}`; };
     const has = (w) => typeof w.usd === 'number';
-    function cur(w, kd) {
+    function cur(w, kd, off) {
       if (!w) return h('span', { class: 'faint', text: '—' });
+      if (off) return h('div', { class: 'qw-cur', title: qwTitle(w, kd) },
+        h('b', { class: 'qw-usd', text: has(w) ? usd(w.usd) : '—' }),
+        h('span', { class: 'faint xs', text: ['已归档，停止更新', typeof w.last_pct === 'number' ? '最后已用 ' + pct(w.last_pct) : null].filter(Boolean).join(' · ') }));
       const left = until(w.end), f = w.full;
       return h('div', { class: 'qw-cur', title: qwTitle(w, kd) + '\n\n' + fullTitle(w, kd) },
         h('b', { class: 'qw-usd' + (w.missing ? ' partial' : ''), text: reached(w) ? resultText(w) : has(w) ? usd(w.usd) : '统计中' }),
@@ -1967,9 +1978,10 @@
         const a = accts[k], r5 = (a.recent['5h'] || []).filter(has), r7 = (a.recent['7d'] || []).filter(has);
         const avg = r5.length ? r5.reduce((s, w) => s + w.usd, 0) / r5.length : null, last7 = r7.length ? r7[r7.length - 1] : null;
         return h('tr', { class: 'qw-row' + (k === key ? ' on' : ''), onclick: () => pick(k, null, true) },
-          h('td', { 'data-label': '' }, h('div', { class: 'qw-name' }, h('b', { text: nm(k) }), sub(k) && sub(k) !== nm(k) ? h('span', { class: 'faint xs mono', text: sub(k) }) : null)),
-          h('td', { 'data-label': '当前 5h 窗口' }, cur(a.current['5h'], '5h')),
-          h('td', { 'data-label': '当前 7d 窗口' }, cur(a.current['7d'], '7d')),
+          h('td', { 'data-label': '' }, h('div', { class: 'qw-name' }, h('b', { text: nm(k) }, gone(k) ? h('span', { class: 'chip', style: { marginLeft: '6px' }, title: '不在当前账号列表里', text: '已归档' }) : null),
+            sub(k) && sub(k) !== nm(k) ? h('span', { class: 'faint xs mono', text: sub(k) }) : null)),
+          h('td', { 'data-label': '当前 5h 窗口' }, cur(a.current['5h'], '5h', gone(k))),
+          h('td', { 'data-label': '当前 7d 窗口' }, cur(a.current['7d'], '7d', gone(k))),
           h('td', { 'data-label': '最近的 5h 窗口' }, r5.length ? h('div', { class: 'qw-spark', title: r5.map((w) => `${fmtShort(w.start)}  ${usd(w.usd)}`).join('\n') }, r5.length > 1 ? sparkline(r5.map((w) => w.usd)) : null,
             h('span', { class: 'faint xs', text: `${r5.length} 个 · 平均 ${usd(avg)}` })) : h('span', { class: 'faint xs', text: '还没有结束的' })),
           h('td', { 'data-label': '上一个 7d 窗口' }, last7 ? h('div', { class: 'qw-cur' }, h('b', { class: 'qw-usd', text: usd(last7.usd) }),
@@ -2073,12 +2085,15 @@
     }
     async function load(again) {
       try {
-        const [acc, o, ch] = await Promise.all([again ? null : api('GET', '/v1/accounts').catch(() => null), api('GET', '/me/windows/overview'), api('GET', '/me/windows/cache').catch(() => null)]);
+        const [acc, o, ch, arc] = await Promise.all([again ? null : api('GET', '/v1/accounts').catch(() => null), api('GET', '/me/windows/overview'), api('GET', '/me/windows/cache').catch(() => null),
+          again ? null : api('GET', '/v1/archived-accounts').catch(() => null)]);
         if (!detail.isConnected) return;
         if (acc) {
           const rows = (acc.data && acc.data.rows) || [];
           order = rows.map(qwKey).filter(Boolean);
-          names = Object.fromEntries(rows.map((r) => [qwKey(r), { name: r.display_name || r.email, email: r.email }]));
+          // 归档的号用归档记录里的名字（同一个邮箱以在用的为准）
+          const old = ((arc && arc.data && arc.data.records) || []).map((r) => [qwKey(r), { name: r.display_name || r.email, email: r.email }]).filter((x) => x[0]);
+          names = Object.assign(Object.fromEntries(old), Object.fromEntries(rows.map((r) => [qwKey(r), { name: r.display_name || r.email, email: r.email }])));
         }
         ov = o;
         if (ch) cdata = ch;
