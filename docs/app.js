@@ -819,7 +819,8 @@
   function qwTitle(w, kind) {
     if (!w) return `这个号现在没有进行中的 ${kind} 窗口`;
     if (reached(w)) return fullTitle(w, kind);
-    return [`${kind} 窗口 ${fmtShort(w.start)} – ${fmtShort(w.end)}（按重置时间推算）`,
+    return [w.capacity_change ? '同一窗口内由标准升为高级：升级前曾满，已跑金额不清零。' : null,
+      `${kind} 窗口 ${fmtShort(w.start)} – ${fmtShort(w.end)}（按重置时间推算）`,
       typeof w.usd === 'number' ? `已跑 ${usd4(w.usd)}（所有模型合计，按请求跑完的时刻记）· ${compact(w.requests)} 次请求` + (w.tokens ? ` · ${compact(w.tokens)} tokens` : '') : '正在统计起点以来跑了多少额度…',
       w.state === 'live' && w.usd_at ? `算到 ${fmtTime(w.usd_at, false)}（每 30 秒更新，窗口结束后再精确统计）` : QW_STATE[w.state] || '',
       w.missing ? `有 ${w.missing} 段 10 分钟没查到，数字偏小；窗口结束后会精确统计` : '',
@@ -1887,7 +1888,8 @@
           h('td', { 'data-label': '其中 Opus / Fable', class: 'num faint', text: has(w) ? `${usd(w.opus)} / ${usd(w.fable)}` : '—' }),
           h('td', { 'data-label': '用量 %' }, h('div', { class: 'row', style: { gap: '6px', flexWrap: 'wrap' } },
             typeof w.last_pct === 'number' ? h('span', { class: w.last_pct >= 90 ? 'text-bad' : w.last_pct >= 75 ? 'text-warn' : '', text: pct(w.last_pct) + (w.peak_pct && w.peak_pct !== w.last_pct ? `（最高 ${pct(w.peak_pct)}）` : '') }) : h('span', { class: 'faint', text: '—' }),
-            w.rejected_at ? h('span', { class: 'chip chip-warn', title: '这个窗口被 Anthropic 拒过（额度已满）', text: '打满' }) : null)),
+            w.capacity_change ? h('span',{class:'chip',title:'原窗口的金额继续累计，升级前的满额不代表当前状态。',text:'升级前曾满'}) : null,
+            w.rejected_at ? h('span', { class: 'chip chip-warn', title: '当前席位在本窗用满', text: w.capacity_change?'升级后打满':'打满' }) : null)),
           h('td', { 'data-label': '实跑 / 预测', class: 'num' + (w.full && (w.full.src === 'hist' || w.full.src === 'pool') ? ' faint' : ''), title: fullTitle(w, kind), text: reached(w) ? '实跑 ' + resultText(w) : resultText(w) }),
           h('td', { 'data-label': '缓存占比', class: 'num', title: typeof w.cache_share === 'number' ? `全部 ${compact(w.all_tokens)} token（含缓存），其中输入 + 输出 ${compact(w.io_at_all)}；算到 ${fmtTime(w.all_at, false)}` : '这个窗口开始时还没有记录卡片 token，算不了', text: typeof w.cache_share === 'number' ? pct(Math.round(w.cache_share * 1000) / 10) : '—' }),
           h('td', { 'data-label': '状态' }, h('span', { class: 'badge ' + (w.state === 'final' ? 'b-ok' : w.state === 'live' ? 'b-blue' : 'b-gray'), title: w.state === 'live' && w.usd_at ? `算到 ${fmtTime(w.usd_at, false)}` : '', text: stateText(w) })));
