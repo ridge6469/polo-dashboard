@@ -937,7 +937,8 @@
         h('div', { class: 'l-sub' }, meta || '—'),
         h('div', { class: 'l-sub' }, lastUsed ? h('span', { title: d.last_used_at ? '最近使用：' + fmtTime(d.last_used_at) : null, text: `${lastUsed}使用` }) : '未使用',
           d.usage_updated_at ? h('span', { class: old ? 'text-warn' : '', title: '后台最近一次刷新该账号用量：' + fmtTime(d.usage_updated_at) }, ` · 用量 ${ago(d.usage_updated_at)}更新`) : null),
-        r.cool ? h('div', { class: 'l-cool', title: coolTitle(r.cool) }, icon('clock', 'icon icon-sm'), h('span', { text: coolText(r.cool) })) : null),
+        r.cool ? h('div', { class: 'l-cool', title: coolTitle(r.cool) }, icon('clock', 'icon icon-sm'), h('span', { text: coolText(r.cool) }),
+          admin && r.email ? h('button', { class: 'btn btn-secondary btn-xs l-recover', type: 'button', title: '刷新用量；官方用量没满就清空本地冷却、清除错误', onclick: (e) => { e.stopPropagation(); recoverAccount(r); } }, '恢复') : null) : null),
       // 状态 + 实时
       h('td', { 'data-label': '状态 / 实时' },
         h('div', { class: 'l-line' }, statusBadge(r),
@@ -1071,7 +1072,42 @@
     }
     items.push({ label: '复制邮箱', icon: 'copy', disabled: !r.email, onClick: () => copy(r.email, '邮箱') },
       { label: '复制出口 IP', icon: 'globe', disabled: !ip, onClick: () => copy(ip, ' IP') });
+    if (isAdmin() && r.email) items.push('-', { label: '恢复：刷新用量 / 清冷却', icon: 'refresh', onClick: () => recoverAccount(r) });
     menu(anchor, items, r.display_name || r.email);
+  }
+  // ---------- 账号恢复（管理员）：服务器在 Polo 上刷新用量，失败就普通刷新 Token 再刷；官方用量没满才清空本地冷却、清除错误 ----------
+  const RECOVER_OUT = { recovered: '已恢复', already_ok: '本来就正常', still_full: '确实满了，没清', partial: 'Polo 还显示冷却', failed: '没恢复' };
+  const RECOVER_WHY = { usage_refresh_failed: '刷新用量失败（刷新 Token 后也不行）', usage_not_updated: '官方用量没有更新', not_found: 'Polo 上找不到这个号',
+    disabled: '号已停用，不处理', page_not_ready: 'Polo 页面没准备好', reload_failed: '刷新后读不到账号数据', clear_cooldown_failed: '清空本地冷却失败',
+    clear_error_failed: '清除错误失败', expired: '排队太久，已放弃', timeout: '超时没有结果' };
+  const RECOVER_STEP = { 'refresh-usage': '刷新用量', refresh: '刷新 Token（普通）', 'clear-cooldown': '清空本地冷却', 'clear-error': '清除错误' };
+  function recoverText(a) {
+    if (!a.done_at) return '排队中…';
+    const use = a.usage ? Object.entries(a.usage).filter(([k]) => k === '5h' || k === '7d').map(([k, v]) => `${k} ${Math.round(v)}%`).join(' · ') : '';
+    return (RECOVER_OUT[a.outcome] || a.outcome) + (a.reason ? '：' + (RECOVER_WHY[a.reason] || a.reason) : '') +
+      (a.outcome === 'still_full' && a.full ? `（${a.full.join('、')} 已满）` : '') + (use ? `；官方用量 ${use}` : '');
+  }
+  const recoverSteps = (a) => (a.steps || []).map((s) => `${RECOVER_STEP[s.step] || s.step}：${s.ok ? '成功' : '失败' + (s.status ? ' ' + s.status : '') + (s.error ? ' ' + s.error : '')}`).join('\n');
+  async function recoverAccount(r) {
+    const key = r.account_key || (r.email || '').toLowerCase(), name = r.display_name || r.email;
+    const go = await confirmBox(`恢复 ${name}`, '会在 Polo 上对这个号：刷新用量；刷新失败就普通刷新 Token 后再刷新；刷到的官方用量 5h / 7d / 周模型额度都没满，才清空本地冷却、清除错误。真满了不清；不会强制刷新、重新授权、停用或归档。', { okText: '开始恢复' });
+    if (!go) return;
+    let res;
+    try { res = await api('POST', '/admin/accounts/recover', { account_key: key }); } catch (e) { return toast(errText(e), 'bad'); }
+    toast(`正在恢复 ${name}…（约半分钟）`, 'info', 5000);
+    S.jobs = (S.jobs || 0) + 1;
+    try {
+      for (let i = 0; i < 100; i++) {
+        await new Promise((ok) => setTimeout(ok, 2500));
+        const a = await api('GET', '/admin/accounts/recover/' + res.id);
+        if (!a.done_at) continue;
+        const good = a.outcome === 'recovered' || a.outcome === 'already_ok';
+        toast(`${name}：${recoverText(a)}`, good ? 'ok' : a.outcome === 'still_full' ? 'warn' : 'bad', 10000);
+        if (S.reloadDash) S.reloadDash();
+        return;
+      }
+      toast(`${name}：还在排队，稍后在「账号恢复」记录里看结果`, 'info', 8000);
+    } catch (e) { toast(errText(e), 'bad'); } finally { S.jobs = Math.max(0, S.jobs - 1); }
   }
   async function setSeat(r, seat) {
     const key = r.account_key || (r.email ? r.email.toLowerCase() : null);
@@ -1119,7 +1155,8 @@
           h('div', { title: d.last_used_at ? '最近使用：' + fmtTime(d.last_used_at) : '' }, lastUsed ? `${lastUsed}使用` : '—'),
           d.usage_updated_at ? h('div', { class: old ? 'text-warn' : '', title: '后台最近一次刷新该账号用量：' + fmtTime(d.usage_updated_at) }, `用量 ${ago(d.usage_updated_at)}更新`) : null)),
       tags.length ? h('div', { class: 'chips' }, tags) : null,
-      (r.cool || d.cooldown_text) ? h('div', { class: 'notice n-warn', style: { margin: 0, padding: '6px 10px' }, title: r.cool ? coolTitle(r.cool) : null }, icon('clock', 'icon icon-sm'), h('span', { text: r.cool ? coolText(r.cool) : d.cooldown_text })) : null,
+      (r.cool || d.cooldown_text) ? h('div', { class: 'notice n-warn', style: { margin: 0, padding: '6px 10px', alignItems: 'center' }, title: r.cool ? coolTitle(r.cool) : null }, icon('clock', 'icon icon-sm'), h('span', { style: { flex: '1' }, text: r.cool ? coolText(r.cool) : d.cooldown_text }),
+        isAdmin() && r.email ? h('button', { class: 'btn btn-secondary btn-xs', type: 'button', title: '刷新用量；官方用量没满就清空本地冷却、清除错误', onclick: (e) => { e.stopPropagation(); recoverAccount(r); } }, '恢复') : null) : null,
       h('div', { class: 'ac-sec' }, usageBlock(r, false)),
       h('div', { class: 'ac-sec' }, h('table', { class: 'mini' },
         h('thead', {}, h('tr', {}, ['', '请求', 'Token', '费用'].map((x) => h('th', { text: x })))),
@@ -1488,8 +1525,31 @@
         opsCard('用量统计', 'chart', d.vendor, (v) => [
           ['状态', stateText[v.query_state] || v.query_state],
           ['请求数', v.metrics && v.metrics['请求数']], ['Tokens', v.metrics && v.metrics.Tokens], ['成本', v.metrics && v.metrics['成本']],
-        ])),
+        ]),
+        recoverCard(d.recover, d.accounts)),
         proxyCard(d.proxies, d.accounts));
+    }
+    // 账号恢复记录 + 自动恢复开关（自动：Polo 因 5h / 7d 满了冷却着，冷却后刷到的官方用量却明显没满，比如升级了席位）
+    function recoverCard(res, accRes) {
+      const names = {};
+      for (const r of (accRes && accRes.data && accRes.data.rows) || []) if (r.account_key) names[r.account_key.toLowerCase()] = r.display_name || r.email;
+      const list = ((res && res.actions) || []).slice(0, 8);
+      const sw = res ? h('button', { class: 'btn btn-secondary btn-xs', type: 'button', title: 'Polo 因 5h / 7d 额度满了冷却着、但冷却后刷到的官方用量明显没满（比如升级了席位）时，自动恢复；同一个号 1 小时最多一次',
+        onclick: async (e) => {
+          const b = e.currentTarget; b.disabled = true;
+          try { const o = await api('POST', '/admin/accounts/recover/auto', { on: !res.auto }); res.auto = o.auto; toast(o.auto ? '已打开自动恢复' : '已关闭自动恢复', 'ok'); drawOps(); }
+          catch (er) { toast(errText(er), 'bad'); b.disabled = false; }
+        } }, res.auto ? '自动恢复：开' : '自动恢复：关') : null;
+      const body = !res ? h('p', { class: 'muted', style: { margin: 0 }, text: '暂无数据' })
+        : !list.length ? h('p', { class: 'muted small', style: { margin: 0 }, text: '还没有恢复记录。账号「…」菜单里可以手动恢复。' })
+          : h('div', { class: 'rec-list' }, list.map((a) => h('div', { class: 'small', style: { padding: '4px 0', borderBottom: '1px solid var(--border)' }, title: recoverSteps(a) + (a.note ? '\n' + a.note : '') },
+            h('span', { class: 'faint', text: fmtTime(a.requested_at, false) + ' ' }),
+            h('b', { text: names[a.account_key] || a.account_key }),
+            h('span', { class: 'chip', style: { marginLeft: '6px' }, text: a.why === 'auto' ? '自动' : '手动' }),
+            h('div', { class: a.outcome === 'recovered' || a.outcome === 'already_ok' ? '' : 'faint', text: recoverText(a) }))));
+      return h('div', { class: 'card' },
+        h('div', { class: 'card-head' }, h('h3', { class: 'card-title' }, icon('refresh'), '账号恢复'), sw),
+        h('div', { class: 'card-body' }, body));
     }
     function proxyCard(res, accRes) {
       const data = res && res.data;
@@ -1525,6 +1585,7 @@
       try {
         const keys = admin ? Object.keys(ADMIN_RESOURCES) : ['accounts', 'archived', 'realtime'];
         const qwP = loadQw();
+        const recP = admin ? api('GET', '/admin/accounts/recover').catch(() => null) : null;
         const settled = await Promise.allSettled(keys.map((k) => api('GET', ADMIN_RESOURCES[k])));
         await qwP;
         if (!S.token) return;
@@ -1536,6 +1597,7 @@
           return;
         }
         S.dash = Object.fromEntries(keys.map((k, i) => [k, settled[i].status === 'fulfilled' ? settled[i].value : null]));
+        if (admin) S.dash.recover = await recP;
         if (S.dash.realtime && S.dash.realtime.snapshot_at) snapAt = S.dash.realtime.snapshot_at;
         whenIdle(() => { if (!listBox.isConnected) return; drawNotices(); drawRt(); drawStats(); drawTable(); drawOps(); });
       } finally {
@@ -1558,6 +1620,7 @@
       if (!changed) return;
       whenIdle(() => { if (!listBox.isConnected) return; drawRt(); drawTable(); if (!admin) drawStats(); });
     }, 5000));
+    S.reloadDash = load;  // 账号恢复做完后重新取一次
     if (S.dash) { drawNotices(); drawRt(); drawStats(); drawTable(); drawOps(); }
     load();
   }
