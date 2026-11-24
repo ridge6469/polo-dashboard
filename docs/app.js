@@ -1148,30 +1148,38 @@
   // 周额度（7d 窗口）已经用完
   const weekOut = (r) => { const p = pctOf('7d')(r); return p !== null && p >= 100; };
 
+  // 自动刷新：'sync' = 同步（服务器一采集到新数据就刷新；靠每 5 秒取实时数字时带回来的 snapshot_at 判断，见调用处），或每 1 / 5 / 10 分钟，或关闭
   function autoRefreshControl(onRefresh) {
-    const OPTS = [0, 60, 300, 600];
-    const rawSec = localStorage.getItem('polo_refresh');
-    let sec = rawSec === null ? 60 : Number(rawSec);
-    if (!OPTS.includes(sec)) sec = 60;
-    let left = sec;
-    const label = h('span');
-    const btn = h('button', { class: 'btn btn-secondary btn-sm', type: 'button', title: '自动刷新' }, icon('clock', 'icon icon-sm'), label);
+    const OPTS = ['sync', 0, 60, 300, 600];
+    const raw = localStorage.getItem('polo_refresh2');
+    let sec = raw === null || raw === 'sync' ? 'sync' : Number(raw);
+    if (!OPTS.includes(sec)) sec = 'sync';
+    let left = typeof sec === 'number' ? sec : 0;
+    const slot = h('span', { style: { display: 'inline-flex', alignItems: 'center' } }), label = h('span');
+    const btn = h('button', { class: 'btn btn-secondary btn-sm', type: 'button' }, slot, label);
     const fmt = (s) => (s >= 60 ? `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}` : `${s}s`);
-    const paint = () => { label.textContent = sec ? `自动刷新 · ${fmt(left)}` : '自动刷新：关'; };
+    const paint = () => { label.textContent = sec === 'sync' ? '自动同步' : sec ? `自动刷新 · ${fmt(left)}` : '自动刷新：关'; };
+    const paintMode = () => {
+      clear(slot, sec === 'sync' ? h('span', { class: 'live-dot' }) : icon('clock', 'icon icon-sm'));
+      btn.title = sec === 'sync' ? '实时数字每 15 秒更新；其余数据在服务器每次采集完（约 3 分钟一次）立刻刷新' : '自动刷新';
+      paint();
+    };
     btn.addEventListener('click', () => menu(btn, [
-      { label: '关闭自动刷新', checked: sec === 0, onClick: () => set(0) },
+      { label: '同步：有新数据就刷新', checked: sec === 'sync', onClick: () => set('sync') },
       '-',
       ...[60, 300, 600].map((s) => ({ label: `每 ${s / 60} 分钟`, checked: sec === s, onClick: () => set(s) })),
+      '-',
+      { label: '关闭自动刷新', checked: sec === 0, onClick: () => set(0) },
     ]));
-    function set(s) { sec = s; left = s; localStorage.setItem('polo_refresh', String(s)); paint(); }
+    function set(s) { sec = s; left = typeof s === 'number' ? s : 0; localStorage.setItem('polo_refresh2', String(s)); paintMode(); }
     S.timers.push(setInterval(() => {
-      if (!sec || document.hidden) return;
+      if (typeof sec !== 'number' || !sec || document.hidden) return;
       left -= 1;
       if (left <= 0) { if (busyScrolling()) left = 1; else { left = sec; onRefresh(); } }
       paint();
     }, 1000));
-    paint();
-    return { el: btn, reset: () => { left = sec; paint(); } };
+    paintMode();
+    return { el: btn, reset: () => { left = typeof sec === 'number' ? sec : 0; paint(); }, sync: () => sec === 'sync' };
   }
 
   function pagePoolTrend() {
@@ -1509,7 +1517,7 @@
         h('div', { class: 'card-body', style: { padding: list.length ? '0' : null } }, body));
     }
 
-    let loading = false;
+    let loading = false, snapAt = null;  // snapAt：页面上完整数据对应的那次采集（同步刷新用）
     async function load() {
       if (loading) return;
       loading = true;
@@ -1528,6 +1536,7 @@
           return;
         }
         S.dash = Object.fromEntries(keys.map((k, i) => [k, settled[i].status === 'fulfilled' ? settled[i].value : null]));
+        if (S.dash.realtime && S.dash.realtime.snapshot_at) snapAt = S.dash.realtime.snapshot_at;
         whenIdle(() => { if (!listBox.isConnected) return; drawNotices(); drawRt(); drawStats(); drawTable(); drawOps(); });
       } finally {
         loading = false;
@@ -1542,6 +1551,8 @@
         const r = await api('GET', ADMIN_RESOURCES.realtime);
         changed = !S.dash.realtime || r.sampled_at !== S.dash.realtime.sampled_at || r.stale !== S.dash.realtime.stale;
         if (changed) S.dash.realtime = r;
+        // 同步刷新：服务器刚做完一轮完整采集（snapshot_at 变了），马上重新取全部数据
+        if (auto.sync() && !loading && r.snapshot_at && snapAt && r.snapshot_at !== snapAt) { load(); return; }
       } catch { /* 保留上一次的 */ }
       if (Date.now() - (S.qwAt || 0) > 14000) { await loadQw(); changed = true; }
       if (!changed) return;
