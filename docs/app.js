@@ -2858,11 +2858,12 @@
   function editMemberForm(u,reload) {
     const f=u.form, sel=h('select',{class:'select','aria-label':'结算规则'},f.options.map(x=>h('option',{value:x.key,text:x.name}))), area=h('div');
     const cadence=h('select',{class:'select','aria-label':'结算截止'},h('option',{value:'now',text:'实时（前 2 分钟）'}),h('option',{value:'day',text:'今天结到昨天（北京时间）'}));cadence.value=u.prior_day?'day':'now';
+    const detail=h('input',{type:'checkbox',checked:!!u.show_calc});
     sel.value=f.selected;let input;const option=()=>f.options.find(x=>x.key===sel.value);
     const draw=()=>{const x=option();input=h('input',{class:'input',type:'number',min:x.min,max:x.max,step:x.step,required:!x.optional,value:x.value??''});clear(area,field(x.label,input,x.hint));};
     sel.addEventListener('change',draw);draw();
-    modal({title:f.title,body:h('div',{},field('结算规则',sel),area,field('结算截止',cadence,'结到昨天 23:59:59，保留今天的用量和调整；只影响这位成员，不会自动付款。'),h('p',{class:'hint',text:f.note})),actions:[{label:'取消'},{label:'保存规则',kind:'btn-primary',onClick:async()=>{
-      if(!input.reportValidity())return false; const x=option();try{await api('POST','/admin/settle/'+encodeURIComponent(f.action),{user_id:u.id,mode:x.key,prior_day:cadence.value==='day',[x.field]:input.value===''?null:Number(input.value)});toast('已保存','ok');await reload();}catch(e){toast(errText(e),'bad');return false;}
+    modal({title:f.title,body:h('div',{},field('结算规则',sel),area,h('label',{class:'row'},detail,'向此成员显示自己的结算计算过程（默认关闭）'),field('结算截止',cadence,'结到昨天 23:59:59，保留今天的用量和调整；只影响这位成员，不会自动付款。'),h('p',{class:'hint',text:f.note})),actions:[{label:'取消'},{label:'保存规则',kind:'btn-primary',onClick:async()=>{
+      if(!input.reportValidity())return false; const x=option();try{await api('POST','/admin/settle/'+encodeURIComponent(f.action),{user_id:u.id,mode:x.key,show_calc:detail.checked,prior_day:cadence.value==='day',[x.field]:input.value===''?null:Number(input.value)});toast('已保存','ok');await reload();}catch(e){toast(errText(e),'bad');return false;}
     }}]});
   }
   async function settleSettings(body) {
