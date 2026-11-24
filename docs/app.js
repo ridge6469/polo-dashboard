@@ -788,21 +788,27 @@
   function qwOf(r, k) {
     const a = S.qw && S.qw.accounts && S.qw.accounts[qwKey(r)];
     const w = a && a[k];
-    return w && w.end * 1000 > Date.now() ? w : null;
+    if (!w || w.end * 1000 <= Date.now()) return null;
+    // 两份快照可能不同时更新；已经显示新重置点时不能借用上一窗的金额。
+    const reset = r.quota?.[k]?.reset_at;
+    if (reset && Math.abs(toDate(reset).getTime()/1000 - w.end) > (k === '5h' ? 180 : 3600)) return null;
+    return w;
   }
   const usdS = (v) => (v === null || v === undefined || isNaN(v) ? '—' : '$' + (Math.abs(v) >= 1000 ? Math.round(v).toLocaleString('en-US') : Math.abs(v) >= 100 ? v.toFixed(0) : v.toFixed(Math.abs(v) >= 10 ? 1 : 2)));
   const QW_STATE = { final: '已结束 · 精确值', ended: '已结束 · 长请求跑完、结束 40 分钟后出精确值', live: '进行中 · 每 30 秒更新', pending: '刚发现，正在统计起点以来的额度' };
   // 用满预测：服务器在 Polo 刷新用量 % 的那一刻算“已跑 ÷ %”；本窗口用量太低时用以往窗口的中位数。老数据没有时按结束时的 % 算
-  const FULL_SRC = { now: '按本窗口推算', cur: '按当前已跑和最近一次百分比粗估', rejected: '首次满额时的采样估算', hist: '按这个号以往的窗口', pool: '按同席位全部号以往的窗口' };
-  const qwFull = (w) => (w && w.full && w.full.est > 0 ? w.full.est : null);
+  const FULL_SRC = { now: '按本窗口推算', cur: '按当前已跑和最近一次百分比粗估', actual: '本窗实跑', waiting: '待核实', hist: '按这个号以往的窗口', pool: '按同席位全部号以往的窗口' };
+  const reached = w => !!(w && (w.rejected_at || w.last_pct >= 100 || ['actual', 'waiting', 'rejected'].includes(w.full?.src)));
+  const qwFull = w => reached(w) ? (w.full?.src === 'actual' ? w.full.usd : null) : (w?.full?.est > 0 ? w.full.est : null);
+  const resultText = w => qwFull(w) == null ? (reached(w) ? '待核实' : '—') : (reached(w) ? '' : '≈ ') + usd(qwFull(w));
   function fullTitle(w, kind) {
     const f = w && w.full;
-    if (!f || !(f.est > 0)) return w && (w.rejected_at || w.last_pct >= 100) ? `${kind} 已满，缺少可信的满时金额。` : `${kind} 用满预测：还没有足够数据。`;
-    if (f.src === 'rejected') {
-      const lines = [`${kind} 已满 · ${fmtTime(f.at, false)}`, `首次满额时约 ${usd(f.usd)}：来自窗口内卡片计数的估算，不是官方美元上限，也不是整窗最终金额。`];
-      if (typeof w.usd === 'number' && w.usd > f.usd + 0.005 && w.src === 'counter') lines.push(`本窗随后又记入约 ${usd(w.usd - f.usd)}，已包含在“已跑”里。仍在处理的请求可能在满额后才记账。`);
-      return lines.join('\n');
+    if (reached(w)) {
+      if (f?.src !== 'actual') return kind + ' 已满，现有读数还不能确认本窗实际金额；不以预测代替。';
+      const basis = f.basis === 'counter' ? 'Polo 卡片累计读数之差，按请求完成记账，无边界插值。' : 'Polo 用量统计已匹配的金额，按请求开始时间筛选。';
+      return [kind + ' 已满 · 本窗实跑 ' + usd(f.usd), basis, '统计到 ' + fmtTime(f.at) + (f.complete ? '，已覆盖窗口结束。' : '；后续入账会继续计入。')].join('\n');
     }
+    if (!f || !(f.est > 0)) return kind + ' 用满预测：还没有足够数据。';
     const lines = [`用满 ${kind} 预测 ≈ ${usd(f.est)}（${FULL_SRC[f.src] || f.src}）`];
     if (f.src === 'now') lines.push(`Polo 在 ${fmtTime(f.at, false)} 把用量刷新到 ${pct(f.pct)}，按同期金额 ${usd(f.usd)} ÷ ${pct(f.pct)} 推算。不是固定美元上限，也不含尚未记账的请求。`);
     else if (f.src === 'cur') lines.push(`现在已跑 ${usd(f.usd)} ÷ Polo 显示的 ${pct(f.pct)}（% 可能是几分钟前刷新的，会略偏高）；等两种读数能对齐后再更新估算`);
@@ -812,6 +818,7 @@
   }
   function qwTitle(w, kind) {
     if (!w) return `这个号现在没有进行中的 ${kind} 窗口`;
+    if (reached(w)) return fullTitle(w, kind);
     return [`${kind} 窗口 ${fmtShort(w.start)} – ${fmtShort(w.end)}（按重置时间推算）`,
       typeof w.usd === 'number' ? `已跑 ${usd4(w.usd)}（所有模型合计，按请求跑完的时刻记）· ${compact(w.requests)} 次请求` + (w.tokens ? ` · ${compact(w.tokens)} tokens` : '') : '正在统计起点以来跑了多少额度…',
       w.state === 'live' && w.usd_at ? `算到 ${fmtTime(w.usd_at, false)}（每 30 秒更新，窗口结束后再精确统计）` : QW_STATE[w.state] || '',
@@ -821,23 +828,22 @@
   const qwLink = (key, kind) => '#/windows?key=' + encodeURIComponent(key) + '&kind=' + kind;
   function qwCell(r, kind, cls) {
     const w = qwOf(r, kind);
-    if (!w) return null;
+    if (!w || reached(w) || r.quota?.[kind]?.used_pct >= 100) return null;  // 已满只显示一笔实际金额，不再并排一笔估算
     return h('a', { class: cls + (w.missing ? ' partial' : '') + (typeof w.usd === 'number' ? '' : ' wait'), href: qwLink(qwKey(r), kind), title: qwTitle(w, kind),
       onclick: (e) => e.stopPropagation() }, h('b', { text: typeof w.usd === 'number' ? usdS(w.usd) : '…' }), h('span', { class: 'qb-unit', text: '已跑' }));
   }
-  // 用满预测：“满 ≈$810”；打满的窗口显示“打满时 $22.3”（用量到 100% 那一刻的已跑；之后跑完的请求算在已跑里）
+  // 未满估算；已满只展示该窗口累计入账，不再展示首次满额时刻的估值。
   function fullCell(r, kind, cls) {
     const w = qwOf(r, kind), f = w && w.full;
-    if (!w) return null;
-    const p = r.quota && r.quota[kind] && r.quota[kind].used_pct;
-    if ((!f || f.src !== 'rejected') && (p >= 100 || w.last_pct >= 100 || w.rejected_at)) {
-      return h('a', { class: cls + ' qb-full done', href: qwLink(qwKey(r), kind), title: '已经观察到满额，但暂无可信的满时金额；不再显示未满时的预测。', onclick: e => e.stopPropagation() }, h('span', { class: 'qb-unit', text: '已满' }));
-    }
-    if (!f || !(f.est > 0)) return null;
-    const done = f.src === 'rejected';
-    return h('a', { class: cls + ' qb-full' + (f.src === 'hist' || f.src === 'pool' ? ' guess' : '') + (done ? ' done' : ''), href: qwLink(qwKey(r), kind), title: fullTitle(w, kind),
-      onclick: (e) => { e.stopPropagation(); if (isPhone()) { e.preventDefault(); toast(fullTitle(w, kind), 'info', 9000); } } },
-      h('span', { class: 'qb-unit', text: done ? '满时' : '满' }), h('b', { text: '≈' + usdS(f.est) }));
+    const p = r.quota?.[kind]?.used_pct;
+    if (!w && !(p >= 100)) return null;
+    const done = reached(w) || p >= 100;
+    if (!done && (!f || !(f.est > 0))) return null;
+    const title = done && !reached(w) ? kind + ' 已满，等待本窗实跑数据。' : fullTitle(w, kind);
+    return h('a', { class: cls + ' qb-full' + (['hist', 'pool'].includes(f?.src) ? ' guess' : '') + (done ? ' done' : ''), href: qwLink(qwKey(r), kind), title,
+      onclick: e => { e.stopPropagation(); if (isPhone()) { e.preventDefault(); toast(title, 'info', 9000); } } },
+      h('span', { class: 'qb-unit', text: done ? '已满 · 实跑' : '满' }),
+      h('b', { text: done ? (f?.src === 'actual' ? usd(f.usd) : '待核实') : '≈' + usdS(f.est) }));
   }
   async function loadQw() {
     try { S.qw = await api('GET', '/me/windows/current'); S.qwAt = Date.now(); } catch { /* 拿不到就不显示 */ }
@@ -1566,7 +1572,7 @@
     const since = h('span'), err = h('div');
     const help = h('div', { class: 'card', style: { marginBottom: '16px' } }, h('div', { class: 'card-body' }, howTo('怎么算的',
       h('div', { class: 'hint', text: '窗口：每次采集（约 3 分钟）读每个号 5h / 7d 的“X 后重置”，重置时间往前推 5 小时 / 7 天就是窗口起点（多算 10 分钟以防取整，但不早于上一个窗口的结束；两个窗口之间没有用量，多算不会算进别的窗口）。' }),
-      h('div', { class: 'hint', text: '已跑：Polo 的成本（和结算同一个数），所有模型加在一起，按请求跑完的时刻记（和 Anthropic 的用量 % 同步），只增不减，每 30 秒更新。「用量统计」按请求开始的时刻记、跑完才写，长请求会晚到十几二十分钟，所以不拿它当实时的数。满时 ≈ 是首次记录到 100% 或本窗限额冷却时的已跑估算，采样之间可能插值。已跑还包括之后的入账。' }),
+      h('div', { class: 'hint', text: '未满显示预测；已满只显示本窗口实际记入的总额，包括满额后仍在处理的请求在窗口内完成的费用。优先取能核对起止的卡片累计；对不上就用已有的完整用量查询，显示查询截止时间。两种来源都没有就显示待核实，不插值。' }),
       h('div', { class: 'hint', text: '满 ≈（用满预测）：每次 Polo 把用量 % 刷新到新的数，就用那一刻的“已跑 ÷ %”算出这个窗口跑满 100% 大约是多少钱（% 是整数，% 越高越准）。本窗口用量不到 5% 时用这个号以往窗口的中位数（灰色）。' }),
       h('div', { class: 'hint', text: '缓存：Polo 卡片上的 token 含缓存读写，「用量统计」的 Token 只有输入 + 输出，两者之差就是缓存；缓存占比 = 缓存 token ÷ 全部 token。下面「缓存和额度」看它对每 1% 额度能跑多少钱的影响。' }),
       h('div', { class: 'faint xs', style: { marginTop: '4px' } }, since))));
@@ -1585,7 +1591,7 @@
       h('div', { class: 'card-head' }, h('h3', { class: 'card-title' }, icon('trend'), '每个窗口'), h('div', { class: 'row wrap qw-pick' }, sel, seg)),
       h('div', { class: 'card-body' }, kpis, chartEl),
       h('div', { class: 'table-wrap' }, h('table', { class: 'table responsive qw-table' },
-        h('thead', {}, h('tr', {}, ['窗口', '已跑额度', '请求', 'Token', '其中 Opus / Fable', '用量 %', '用满预测', '缓存占比', '状态'].map((x) => h('th', { text: x })))), tbody)),
+        h('thead', {}, h('tr', {}, ['窗口', '已跑额度', '请求', 'Token', '其中 Opus / Fable', '用量 %', '实跑 / 预测', '缓存占比', '状态'].map((x) => h('th', { text: x })))), tbody)),
       h('div', { style: { textAlign: 'center', padding: '8px' } }, moreBtn));
     // 缓存和额度：缓存占比高低对“每 1% 额度能跑多少钱”的影响
     let cdata = null, cchart = null, ckind = localStorage.getItem('polo_qc_kind') === '7d' ? '7d' : '5h';
@@ -1744,7 +1750,7 @@
     }
     async function drawCacheChart() {
       const segs = ((cdata && cdata.segments) || []).filter((s) => s.kind === ckind && s.all > 0 && s.io !== null && s.p1 > s.p0);
-      const wins = ((cdata && cdata.windows) || []).filter((w) => w.kind === ckind && w.full && (w.full.src === 'now' || w.full.src === 'rejected'));
+      const wins = ((cdata && cdata.windows) || []).filter((w) => w.kind === ckind && w.full && (w.full.src === 'now' || w.full.src === 'actual'));
       if (!segs.length && !wins.length) {
         if (cchart) { cchart.dispose(); S.charts = S.charts.filter((x) => x !== cchart); cchart = null; }
         clear(cChartEl, emptyState('等号跑起来：用量每涨几个点就会多一个点', 'clock'));
@@ -1761,7 +1767,7 @@
       const tip = (p) => {
         if (p.seriesName === '拟合') return '';
         if (p.data.s) { const s = p.data.s; return `<div class="ct-title">${escHtml(nm(s.key))} · ${escHtml(fmtShort(s.t0))} → ${escHtml(fmtShort(s.t1).slice(6))}</div>` + tipRow('用量', `${pct(s.p0)} → ${pct(s.p1)}`) + tipRow('花了', usd4(s.usd)) + tipRow('每 1% 额度', usd(p.value[1])) + tipRow('缓存占比', p.value[0] + '%') + tipRow('全部 token', compact(s.all)); }
-        const w = p.data.w; return `<div class="ct-title">${escHtml(nm(w.key))} · 整个窗口 ${escHtml(fmtShort(w.start))}</div>` + tipRow('跑满 ≈', usd(w.full.est)) + tipRow('每 1% 额度', usd(w.full.est / 100)) + tipRow('缓存占比', cpct(w.cache_share));
+        const w = p.data.w; return `<div class="ct-title">${escHtml(nm(w.key))} · 整个窗口 ${escHtml(fmtShort(w.start))}</div>` + tipRow(reached(w) ? '本窗实跑' : '跑满预测 ≈', usd(qwFull(w))) + tipRow('每 1% 额度', usd(qwFull(w) / 100)) + tipRow('缓存占比', cpct(w.cache_share));
       };
       cchart.setOption(Object.assign(b, {
         grid: { left: 8, right: 14, top: 40, bottom: 26, containLabel: true },
@@ -1771,7 +1777,7 @@
         yAxis: axisY(t, (v) => '$' + (v >= 10 ? Math.round(v) : v.toFixed(1))),
         series: [
           { name: '每一段', type: 'scatter', data: sp, symbolSize: (v, p) => Math.min(16, 5 + (p.data.s.p1 - p.data.s.p0) * 1.2), itemStyle: { color: 'rgba(59,130,246,.55)', borderColor: '#3b82f6' } },
-          { name: '整个窗口', type: 'scatter', symbol: 'diamond', symbolSize: 13, data: wins.map((w) => ({ value: [Math.round(w.cache_share * 1000) / 10, w.full.est / 100], w })), itemStyle: { color: '#f59e0b' } },
+          { name: '整个窗口', type: 'scatter', symbol: 'diamond', symbolSize: 13, data: wins.map((w) => ({ value: [Math.round(w.cache_share * 1000) / 10, qwFull(w) / 100], w })), itemStyle: { color: '#f59e0b' } },
           { name: '拟合', type: 'line', data: fit, symbol: 'none', silent: true, lineStyle: { color: '#ef4444', width: 2, type: 'dashed' } },
         ],
       }), true);
@@ -1785,10 +1791,10 @@
     const has = (w) => typeof w.usd === 'number';
     function cur(w, kd) {
       if (!w) return h('span', { class: 'faint', text: '—' });
-      const left = until(w.end), f = w.full && w.full.est > 0 ? w.full : null;
+      const left = until(w.end), f = w.full;
       return h('div', { class: 'qw-cur', title: qwTitle(w, kd) + '\n\n' + fullTitle(w, kd) },
-        h('b', { class: 'qw-usd' + (w.missing ? ' partial' : ''), text: has(w) ? usd(w.usd) : '统计中' }),
-        f ? h('span', { class: 'qw-full' + (f.src === 'hist' || f.src === 'pool' ? ' guess' : ''), text: f.src === 'rejected' ? '已打满' : `满 ≈${usdS(f.est)}` + (has(w) ? ` · 剩 ≈${usdS(Math.max(0, f.est - w.usd))}` : '') }) : null,
+        h('b', { class: 'qw-usd' + (w.missing ? ' partial' : ''), text: reached(w) ? resultText(w) : has(w) ? usd(w.usd) : '统计中' }),
+        f ? h('span', { class: 'qw-full' + (f.src === 'hist' || f.src === 'pool' ? ' guess' : ''), text: reached(w) ? '已满 · 实跑' : `满 ≈${usdS(f.est)}` + (has(w) ? ` · 剩 ≈${usdS(Math.max(0, f.est - w.usd))}` : '') }) : null,
         h('span', { class: 'faint xs', text: [typeof w.last_pct === 'number' ? '已用 ' + pct(w.last_pct) : null, left ? left + '后重置' : null].filter(Boolean).join(' · ') }));
     }
     function drawOv() {
@@ -1826,22 +1832,22 @@
     const kpi = (label, value, note) => h('div', { class: 'qw-kpi' }, h('span', { class: 'faint xs', text: label }), h('b', { text: value }), note ? h('span', { class: 'faint xs', text: note }) : null);
     function drawDetail() {
       const ws = list(), done = ws.filter((w) => (w.state === 'final' || w.state === 'ended') && has(w));
-      const fulls = done.map(qwFull).filter((x) => x !== null).sort((a, b) => a - b);
+      const fulls = done.filter(w => w.full?.src === 'actual' && w.full.complete).map(qwFull).filter((x) => x !== null).sort((a, b) => a - b);
       const med = fulls.length ? (fulls.length % 2 ? fulls[(fulls.length - 1) / 2] : (fulls[fulls.length / 2 - 1] + fulls[fulls.length / 2]) / 2) : null;
       const maxW = done.reduce((m, w) => (!m || w.usd > m.usd ? w : m), null), avg = done.length ? done.reduce((s, w) => s + w.usd, 0) / done.length : null;
-      const now = ws.find((w) => w.state === 'live'), nf = now && now.full && now.full.est > 0 ? now.full : null;
+      const now = ws.find((w) => w.state === 'live'), nf = now?.full;
       clear(kpis, kpi('已结束的窗口', `${done.length} 个`, ws.length > done.length ? `另有 ${ws.length - done.length} 个进行中` : ''),
         kpi('平均每个窗口', avg !== null ? usd(avg) : '—'),
         kpi('最多的一个', maxW ? usd(maxW.usd) : '—', maxW ? fmtShort(maxW.start) + ' 开始' : ''),
-        kpi('打满（被拒）', `${done.filter((w) => w.rejected_at).length} 次`),
-        kpi(nf && nf.src === 'rejected' ? '本窗首次满额时' : '当前窗口用满预测', nf ? '≈ ' + usd(nf.est) : '—', nf ? (FULL_SRC[nf.src] || '') + (has(now) && nf.src !== 'rejected' ? ` · 还能跑 ≈${usdS(Math.max(0, nf.est - now.usd))}` : '') : '用量不到 5% 且没有以往窗口'),
-        kpi('以往用满额度', med !== null ? '≈ ' + usd(med) : '—', fulls.length ? `${fulls.length} 个结束的窗口的中位数` : '有窗口结束后才有'));
+        kpi('已跑满窗口', `${done.filter(reached).length} 次`),
+        kpi(reached(now) ? '当前窗口实跑' : '当前窗口用满预测', resultText(now), nf ? (FULL_SRC[nf.src] || '') + (has(now) && !reached(now) ? ` · 还能跑 ≈${usdS(Math.max(0, nf.est - now.usd))}` : '') : '用量不到 5% 且没有以往窗口'),
+        kpi('以往跑满实绩中位数', med !== null ? usd(med) : '—', fulls.length ? `${fulls.length} 个结束的窗口的中位数` : '有窗口结束后才有'));
       drawChart(); drawTable();
     }
     const tipRow = (k, v) => `<div class="ct-row"><span>${escHtml(k)}</span><b>${escHtml(v)}</b></div>`;
     const tipHtml = (w) => `<div class="ct-title">${escHtml(span(w))}</div>` + tipRow('已跑额度', has(w) ? usd4(w.usd) : '统计中') +
       tipRow('请求', compact(w.requests)) + tipRow('Token', compact(w.tokens)) + tipRow('用量 %', typeof w.last_pct === 'number' ? pct(w.last_pct) : '—') +
-      (qwFull(w) ? tipRow(w.full.src === 'rejected' ? '首次满额时 ≈' : '用满预测 ≈', usd(qwFull(w))) : '') + (typeof w.cache_share === 'number' ? tipRow('缓存占比', pct(Math.round(w.cache_share * 1000) / 10)) : '') + (w.rejected_at ? tipRow('打满', '被拒') : '') + `<div class="ct-more">${escHtml(stateText(w))}</div>`;
+      (qwFull(w) != null ? tipRow(reached(w) ? '本窗实跑' : '用满预测 ≈', usd(qwFull(w))) : '') + (typeof w.cache_share === 'number' ? tipRow('缓存占比', pct(Math.round(w.cache_share * 1000) / 10)) : '') + (w.rejected_at ? tipRow('打满', '被拒') : '') + `<div class="ct-more">${escHtml(stateText(w))}</div>`;
     async function drawChart() {
       const ws = list().slice().reverse();
       if (!ws.length) {
@@ -1861,7 +1867,7 @@
         yAxis: [axisY(t, shortUsd), axisY(t, (v) => v + '%', { min: 0, max: 100, splitLine: { show: false } })],
         dataZoom: zoom ? [{ type: 'inside', startValue: n - 30, endValue: n - 1 }, { type: 'slider', height: 18, bottom: 8, startValue: n - 30, endValue: n - 1, borderColor: t.border, textStyle: { color: t.muted } }] : [],
         series: [
-          { name: '已跑额度', type: 'bar', barMaxWidth: 34, data: ws.map((w) => ({ value: has(w) ? w.usd : 0,
+          { name: '已跑额度', type: 'bar', barMaxWidth: 34, data: ws.map((w) => ({ value: has(w) ? w.usd : null,
             itemStyle: { borderRadius: [5, 5, 0, 0], color: w.rejected_at ? grad(E, '#f87171', '#dc2626') : w.state === 'final' ? grad(E, '#60a5fa', '#6366f1') : grad(E, 'rgba(96,165,250,.5)', 'rgba(99,102,241,.4)') } })) },
           { name: '用量 %', type: 'line', yAxisIndex: 1, smooth: true, symbolSize: 6, connectNulls: true, data: ws.map((w) => (typeof w.last_pct === 'number' ? w.last_pct : null)),
             lineStyle: { width: 2, color: '#f59e0b' }, itemStyle: { color: '#f59e0b' } },
@@ -1872,7 +1878,6 @@
       const ws = list();
       if (!ws.length) { clear(tbody, h('tr', {}, h('td', { colspan: '9' }, emptyState(key ? '还没有记录' : '先选一个账号', 'clock')))); moreBtn.hidden = true; return; }
       clear(tbody, ws.slice(0, shown).map((w) => {
-        const full = qwFull(w);
         return h('tr', { class: w.state === 'final' ? '' : 'qw-live' },
           h('td', { 'data-label': '窗口' }, h('div', { class: 'mono small', text: span(w) }),
             w.end_src === 'early' ? h('div', { class: 'faint xs', text: 'Polo 提前重置' }) : w.end_src === 'cooldown' ? h('div', { class: 'faint xs', text: '结束时间按冷却原因' }) : null),
@@ -1883,7 +1888,7 @@
           h('td', { 'data-label': '用量 %' }, h('div', { class: 'row', style: { gap: '6px', flexWrap: 'wrap' } },
             typeof w.last_pct === 'number' ? h('span', { class: w.last_pct >= 90 ? 'text-bad' : w.last_pct >= 75 ? 'text-warn' : '', text: pct(w.last_pct) + (w.peak_pct && w.peak_pct !== w.last_pct ? `（最高 ${pct(w.peak_pct)}）` : '') }) : h('span', { class: 'faint', text: '—' }),
             w.rejected_at ? h('span', { class: 'chip chip-warn', title: '这个窗口被 Anthropic 拒过（额度已满）', text: '打满' }) : null)),
-          h('td', { 'data-label': '用满预测', class: 'num' + (w.full && (w.full.src === 'hist' || w.full.src === 'pool') ? ' faint' : ''), title: w.full ? fullTitle(w, kind) : full ? `已跑 ${usd(w.usd)} ÷ 结束时用量 ${pct(w.last_pct)}` : '用量低于 5% 不估', text: full ? '≈ ' + usd(full) : '—' }),
+          h('td', { 'data-label': '实跑 / 预测', class: 'num' + (w.full && (w.full.src === 'hist' || w.full.src === 'pool') ? ' faint' : ''), title: fullTitle(w, kind), text: reached(w) ? '实跑 ' + resultText(w) : resultText(w) }),
           h('td', { 'data-label': '缓存占比', class: 'num', title: typeof w.cache_share === 'number' ? `全部 ${compact(w.all_tokens)} token（含缓存），其中输入 + 输出 ${compact(w.io_at_all)}；算到 ${fmtTime(w.all_at, false)}` : '这个窗口开始时还没有记录卡片 token，算不了', text: typeof w.cache_share === 'number' ? pct(Math.round(w.cache_share * 1000) / 10) : '—' }),
           h('td', { 'data-label': '状态' }, h('span', { class: 'badge ' + (w.state === 'final' ? 'b-ok' : w.state === 'live' ? 'b-blue' : 'b-gray'), title: w.state === 'live' && w.usd_at ? `算到 ${fmtTime(w.usd_at, false)}` : '', text: stateText(w) })));
       }));
