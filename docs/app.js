@@ -2269,9 +2269,28 @@
     const ms = costs.members.filter((m) => m.cost_total_cny > 0 || m.pending_seat);
     if (!ms.length) return null;
     const tbody = h('tbody');
+    // 每个号的回本：成员的回本合在一起算，每张单里的回本按各号的额度占比分到各号（服务器算好）
+    const acctTiles = (m) => {
+      const list = (m.accounts || []).filter((a) => a.cost > 0 || a.wait || a.done + a.pend > 0.004);
+      if (!list.length) return null;
+      return h('div', { class: 'rec-accts' }, list.map((a) => {
+        const got = r2(a.done + a.pend), pct = a.cost > 0 ? Math.floor((got / a.cost) * 100 + 1e-9) : null;
+        const seat = a.seat === 'premium' ? '高级' : a.seat === 'standard' ? '标准' : null;
+        return h('div', { class: 'rec-acct', title: `${a.name || a.key}\n已回本 ${cny(a.done)}${a.pend ? ` · 本期预计 ${cny(a.pend)}` : ''}${a.cost ? ` / 成本 ${cny(a.cost)}` : ''}\n贡献额度 ${usd(a.usd)} · 成员收入 ${cny(r2(a.inc_done + a.inc_pend))}` },
+          h('div', { class: 'ra-head' }, h('b', { class: 'ra-name', text: a.name || keyText(a.key) }),
+            seat ? h('span', { class: 'seat ' + (a.seat === 'premium' ? 'seat-premium' : 'seat-standard'), text: seat }) : null,
+            a.status === 'archived' ? h('span', { class: 'chip', text: '已归档' }) : null,
+            h('span', { class: 'ra-pct ' + (pct === null ? 'faint' : pct >= 100 ? 'text-ok' : ''), text: pct === null ? '无成本' : pct + '%' })),
+          a.cost > 0 ? recoveryBar(a.cost, a.done, a.pend) : null,
+          h('div', { class: 'ra-sub' }, a.cost > 0
+            ? `${cny(got)} / ${cny(a.cost)}${a.wait ? ' + 待定' : ''}${got < a.cost ? ` · 还差 ${cny(r2(a.cost - got))}` : ' · 已回本'}`
+            : a.wait ? '成本待定（未标席位）' : `帮其他号回本 ${cny(got)}`));
+      }));
+    };
     for (const m of ms) {
       const exp = h('tr', { class: 'exp-row', hidden: true }, h('td', { colspan: '7' }, chargesTable(costs.charges.filter((x) => x.user_id === m.user_id), { admin: true, reload })));
-      const tr = h('tr', { class: 'click', onclick: () => { exp.hidden = !exp.hidden; tr.classList.toggle('open', !exp.hidden); } },
+      const tiles = acctTiles(m);
+      const tr = h('tr', { class: 'click' + (tiles ? ' has-accts' : ''), onclick: () => { exp.hidden = !exp.hidden; tr.classList.toggle('open', !exp.hidden); } },
         h('td', { 'data-label': '' }, userName2(m.user_id, m.username), m.pending_seat ? h('div', { class: 'text-warn xs', text: `${m.pending_seat} 笔成本待定（未标席位）` }) : h('div', { class: 'faint xs', text: '点击看成本记录' })),
         h('td', { 'data-label': '进度', style: { minWidth: '150px' } }, recoveryBar(m.cost_total_cny, m.recovered_cny, m.pending_recover_cny)),
         h('td', { 'data-label': '成本合计', class: 'num' }, cny(m.cost_total_cny)),
@@ -2279,10 +2298,10 @@
         h('td', { 'data-label': '本期预估回本', class: 'num' }, m.pending_recover_cny ? cny(m.pending_recover_cny) : '—'),
         h('td', { 'data-label': '还差', class: 'num ' + (m.remaining_cny > 0 ? 'text-warn' : 'text-ok') }, m.remaining_cny > 0 ? cny(m.remaining_cny) : '已回本'),
         h('td', { class: 'faint' }, icon('down', 'icon icon-sm chev')));
-      append(tbody, tr, exp);
+      append(tbody, tr, tiles ? h('tr', { class: 'rec-acc-row' }, h('td', { colspan: '7' }, tiles)) : null, exp);
     }
     return h('div', { class: 'card', style: { marginTop: '16px' } },
-      h('div', { class: 'card-head' }, h('h3', { class: 'card-title' }, icon('trend'), '回本进度'), h('span', { class: 'faint xs', text: '成员名下号的成本（开号 + 每月续费）回本前，收入全归成员、不分成' })),
+      h('div', { class: 'card-head' }, h('h3', { class: 'card-title' }, icon('trend'), '回本进度'), h('span', { class: 'faint xs', text: '成员名下号的成本（开号 + 每月续费）回本前，收入全归成员、不分成。下面是各号的回本：每张单的回本按各号额度占比分摊，绿色已回、斜纹本期预计' })),
       h('div', { class: 'table-wrap' }, h('table', { class: 'table responsive' }, h('thead', {}, h('tr', {}, ['成员', '进度', '成本合计', '已回本', '本期预估回本', '还差', ''].map((t) => h('th', { text: t })))), tbody)));
   }
   // 账号 + 各自的结算区间。额度来源：counter = 卡片“今日”读数相减（请求跑完的时刻记，和网页一致）；slices = 「用量统计」查询（读数覆盖不到的时段）
@@ -3135,7 +3154,10 @@
   function rpTiles(s) {
     const bar = (b) => {
       if (!b) return null;
-      const track = b.pct === null || b.pct === undefined ? null : (() => { const i = h('i', { class: 'rp-fill rp-f-' + (b.tone || 'blue') }); i.style.width = Math.max(0, Math.min(100, b.pct)) + '%'; return h('div', { class: 'rp-track' }, i); })();
+      // 有 pend：回本进度（绿色已回 + 斜纹本期预计），和管理员页一致
+      const track = b.pct === null || b.pct === undefined ? null : b.pend !== undefined
+        ? (() => { const i1 = h('i', { class: 'done' }), i2 = h('i', { class: 'pend' }); i1.style.width = Math.max(0, Math.min(100, b.pct)) + '%'; i2.style.width = Math.max(0, Math.min(100 - b.pct, b.pend)) + '%'; return h('div', { class: 'rbar' }, i1, i2); })()
+        : (() => { const i = h('i', { class: 'rp-fill rp-f-' + (b.tone || 'blue') }); i.style.width = Math.max(0, Math.min(100, b.pct)) + '%'; return h('div', { class: 'rp-track' }, i); })();
       return h('div', { class: 'rp-t-bar' }, track, h('span', { text: b.text || '' }));
     };
     return h('section', { class: 'card rp-card' }, rpHead(s, 'server'), h('div', { class: 'card-body' }, (s.tiles || []).length ? h('div', { class: 'rp-tiles' }, s.tiles.map((x) => h('div', { class: 'rp-tile' },

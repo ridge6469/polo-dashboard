@@ -1058,3 +1058,24 @@ tr:hover .nick-btn { opacity: 1; }
 /* ---- Polo 暂时清空用量数据时，显示的是上次的真实值 ---- */
 .q-stale { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; font-weight: 600; line-height: 16px; padding: 0 6px; border-radius: 5px; background: var(--warn-bg); color: var(--warn); white-space: nowrap; cursor: help; }
 .q-stale::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: currentColor; opacity: .8; }
+
+/* ---- 回本进度：每个号的回本 ---- */
+.table tr.has-accts > td { border-bottom: 0; padding-bottom: 6px; }
+.table tr.rec-acc-row > td { padding: 2px 18px 16px; }
+.table tr.rec-acc-row:hover > td { background: transparent; }
+.rec-accts { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; }
+.rec-acct { display: flex; flex-direction: column; gap: 7px; padding: 10px 12px; border-radius: 12px; background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--border); min-width: 0; }
+.rec-acct .ra-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.rec-acct .ra-name { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.rec-acct .ra-head .seat, .rec-acct .ra-head .chip { flex: none; }
+.rec-acct .ra-pct { margin-left: auto; flex: none; font-weight: 700; font-size: 13px; font-variant-numeric: tabular-nums; }
+.rec-acct .rbar { min-width: 0; }
+.rec-acct .ra-sub { font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.rp-t-bar .rbar { min-width: 0; height: 7px; }
+@media (max-width: 760px) {
+  .table.responsive tr.has-accts { border-bottom: 0; padding-bottom: 4px; }
+  .table.responsive tr.rec-acc-row { padding: 0 14px 14px; }
+  .table.responsive tr.rec-acc-row > td { padding: 0; }
+  .table.responsive tr.rec-acc-row > td::before { display: none; }
+  .rec-accts { grid-template-columns: 1fr; gap: 8px; }
+}
