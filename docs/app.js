@@ -1955,6 +1955,10 @@
     not_latest: '只能撤销这位成员最近一张结算单',
     already_paid: '这张结算单已标记付款，先取消“已付款”再撤销',
     span_changed: '这个号的归属在结算之后变过，不能直接撤销',
+    team_cost_pending:'Team 成本未定，请先在「归属与设置」补充母号日期、席位或手动成本，再重新预览。',
+    bad_mother_day:'母号日期不能晚于该账号首次上号或成本起算日期。',
+    bad_team_prices:'高级席位价格低于标准席位，请先核对设置。',
+    team_start_locked:'已有 Team 成本计划，不能改写席位起算日；可单独设置母号日期。',
     day_closing: '正在等待昨天最后两分钟的用量入账，请在北京时间 00:02 后重试。',
     nothing_to_settle: '这位成员上次结算之后还没有可以结算的部分',
     bad_start: '起算时间不对：不能早于上一段归属或已结算到的时间，也不能是将来',
@@ -2113,7 +2117,7 @@
   }
 
   // ---------- 回本（公共） ----------
-  const KIND = { open: '开号', renew: '续费' };
+  const KIND = { open: '首期', renew: '续费', upgrade: '升级补差' };
   const SEAT_CN = { premium: '高级', standard: '标准' };
   function recoveryBar(total, done, pend) {
     const pc = (x) => (total > 0 ? Math.min(100, Math.max(0, (x / total) * 100)) : 0);
@@ -2142,7 +2146,7 @@
         return h('tr', { class: x.waived ? 'faint' : '' }, h('td', { class: 'nowrap', text: x.due_day }),
           h('td', {}, h('b', { text: x.name || x.account_key }), x.email ? h('div', { class: 'email mono', text: x.email }) : null,
             admin ? h('div', { class: 'faint xs', text: '记在 ' + uname(x.user_id, x.username) + ' 名下' }) : null),
-          h('td', { text: KIND[x.kind] || x.kind }), h('td', { text: SEAT_CN[x.seat] || '—' }), h('td', { class: 'num' }, amount), h('td', {}, ops));
+          h('td', { text: KIND[x.kind] || x.kind }), h('td', { text: SEAT_CN[x.seat] || '—' }), h('td', { class: 'num' }, amount,x.calc_note ? h('small',{class:'faint',style:{display:'block'},text:x.calc_note}) : null), h('td', {}, ops));
       }))));
   }
   function editCharge(x, reload) {
@@ -2792,18 +2796,23 @@
   }
 
   // ---------- 归属与设置 ----------
+  function teamDateModal(a,reload){
+    const tc=a.team_cycle, day=h('input',{class:'input',type:'date',max:tc.first||bjToday(),value:tc.day||''});
+    modal({title:'母号日期 · '+(a.name||a.key),body:h('div',{},field('母号首次开号日（北京）',day,'当前：'+tc.source+'。留空恢复自动；公共邮箱需要手动填。'),h('p',{class:'hint',text:'每 30 天一周期，首期与升级差价按剩余天数折算。只影响本号；已确认期间、手改和免除的费用不重算。'})),actions:[{label:'取消'},{label:'保存',kind:'btn-primary',onClick:async()=>{if(!day.reportValidity())return false;try{await api('POST','/admin/settle/team-date',{account_key:a.key,day:day.value||null});toast('母号日期已保存','ok');await reload();}catch(e){toast(errText(e),'bad');return false;}}}]});
+  }
   function costPlanModal(a, st, reload) {
     const plan = st.costs.plans.find((p) => p.account_key === a.key);
     const today = bjToday();
     const addDay = a.added_at ? dayOfTs(Math.floor(Date.parse(a.added_at) / 1000)) : today;
     const start = h('input', { class: 'input', type: 'date', max: today, value: plan ? plan.start_day : addDay });
+    if (plan && a.team_cycle) start.disabled=true;
     const monthly = h('input', { type: 'checkbox', checked: plan ? !!plan.monthly : st.settings.cost_cycle === 'monthly' });
     const price = SEAT_CN[a.seat] ? `${SEAT_CN[a.seat]}席位 ${cny(st.settings['price_' + a.seat])}` : '还没标席位：金额待定，标上后自动补';
     modal({ title: `${plan ? '修改成本' : '记成本'} · ${a.name || a.key}`,
-      body: h('div', {}, h('p', { class: 'muted small', text: `每次的金额：${price}` }),
-        field('开号日', start, '从这天起算；“每月续费”会在每个月的这一天再记一次'),
-        h('label', { class: 'row', style: { gap: '8px', marginBottom: '12px' } }, monthly, h('span', { text: '每月续费（号归档后自动停止）' })),
-        plan ? h('div', { class: 'notice n-warn' }, icon('warning'), h('span', { text: '修改开号日或续费方式后，这个号的成本记录会按新设置重新生成（之前的“免除”和手动金额会清掉）。' })) : null),
+      body: h('div', {}, h('p', { class: 'muted small', text: (a.team_cycle?'完整 30 天的席位价格：':'每次的金额：')+price }),
+        field(a.team_cycle?'席位起算日':'开号日', start, a.team_cycle?'首期按母号剩余天数，后续每 30 天续费。':'从这天起算；每月在对应日期续费'),
+        h('label', { class: 'row', style: { gap: '8px', marginBottom: '12px' } }, monthly, h('span', { text: a.team_cycle?'每 30 天续费（归档后停止）':'每月续费（号归档后自动停止）' })),
+        plan && !a.team_cycle ? h('div', { class: 'notice n-warn' }, icon('warning'), h('span', { text: '修改开号日或续费方式后，这个号的成本记录会按新设置重新生成（之前的“免除”和手动金额会清掉）。' })) : null),
       actions: [{ label: '取消' }, { label: '保存', kind: 'btn-primary', onClick: async () => {
         try { await api('POST', '/admin/settle/cost-plan', { account_key: a.key, start_day: start.value, monthly: monthly.checked }); toast('已保存', 'ok'); reload(); }
         catch (e) { toast(errText(e), 'bad'); return false; }
@@ -2961,7 +2970,7 @@
       let cost;
       if (p) {
         const each = a.seat ? cny(s['price_' + a.seat]) : '待定';
-        cost = h('div', {}, h('div', { class: 'small', text: `${p.monthly ? '每月' : '一次性'} ${each} · ${p.start_day} 起` }),
+        cost = h('div', {}, h('div', { class: 'small', text: `${p.monthly ? (a.team_cycle?'每30天':'每月') : '一次性'} ${each} · ${p.start_day} 起` }),
           p.user_id !== a.owner ? h('div', { class: 'text-warn xs', text: `记在 ${uname(p.user_id)} 名下` }) : null,
           h('div', { class: 'row', style: { gap: '4px', marginTop: '3px' } },
             h('button', { class: 'btn btn-ghost btn-xs', type: 'button', onclick: () => costPlanModal(a, st, reload) }, '修改'),
@@ -2969,6 +2978,7 @@
       } else if (a.owner) {
         cost = h('div', {}, h('span', { class: 'faint small', text: '不计成本' }), h('button', { class: 'btn btn-ghost btn-xs', type: 'button', style: { marginLeft: '6px' }, onclick: () => costPlanModal(a, st, reload) }, '记成本'));
       } else cost = h('span', { class: 'faint', text: '—' });
+      if(a.team_cycle) cost=h('div',{},cost,h('div',{class:'faint xs',text:'母号：'+(a.team_cycle.day||'日期待定')+' · '+a.team_cycle.source}),h('button',{class:'btn btn-ghost btn-xs',type:'button',onclick:()=>teamDateModal(a,reload)},'设置母号日期'));
       const [bc, bt] = STATUS[a.status] || ['b-gray', a.status];
       return h('tr', {}, h('td', { 'data-label': '' }, acctLabel(a.key, { [a.key]: Object.assign({}, a, { status: '' }) }, a.name), mapCtl),
         h('td', { 'data-label': '状态' }, h('span', { class: 'badge ' + bc, text: bt }), a.seat ? h('div', { class: 'faint xs', style: { marginTop: '3px' }, text: SEAT_CN[a.seat] + '席位' }) : null),
@@ -2980,7 +2990,7 @@
         h('div', { class: 'faint xs', text: '每个号按时间段归属：换成员时选新成员从哪一秒开始算，旧成员到前一秒为止，各自结算，不重复不遗漏。归属和“可见账号”是分开设置的。新号归给成员时自动记成本，已有的号默认不计（可点“记成本”）。' })), fill),
       h('div', { class: 'table-wrap' }, h('table', { class: 'table responsive' }, h('thead', {}, h('tr', {}, ['账号', '状态', '能看到的成员', '结算归属', '成本'].map((t) => h('th', { text: t })))), h('tbody', {}, ownRows))));
     const ledger = h('div', { class: 'card' },
-      h('div', { class: 'card-head' }, h('h3', { class: 'card-title' }, icon('dollar'), '成本记录'), h('span', { class: 'faint xs', text: '每次开号 / 续费一条，金额按当时的席位价格记下；可以改金额或免除' })),
+      h('div', { class: 'card-head' }, h('h3', { class: 'card-title' }, icon('dollar'), '成本记录'), h('span', { class: 'faint xs', text: '首期、续费及升级补差分别记录；Team 按母号的 30 天周期计费。' })),
       h('div', { class: 'card-body' }, chargesTable(st.costs.charges, { admin: true, reload })));
     clear(body, params, shares, owners, ledger);
   }
