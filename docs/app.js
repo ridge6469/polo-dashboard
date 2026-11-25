@@ -3541,16 +3541,18 @@
       let poolUsd = 0;
       for (const day of dayList) for (const r of (byDay[day] || { rows: [] }).rows) poolUsd += r.usd;
       const acc = {};
-      const daily = dayList.map((day) => ({ day, usd: 0, req: 0, tok: 0, opus: 0, fable: 0, my: 0, member: 0, live: day === data.today, fetched: !!byDay[day] }));
+      const daily = dayList.map((day) => ({ day, usd: 0, req: 0, tok: 0, opus: 0, fable: 0, my: 0, member: 0, stl: 0, live: day === data.today, fetched: !!byDay[day] }));
       const ownerUsd = {};
       daily.forEach((D, i) => {
         for (const r of (byDay[D.day] || { rows: [] }).rows) {
           if (!pass(r)) continue;
           const out = r.usd * rate, own = r.owner === null || r.owner === undefined;
-          const my = own ? out : (r.income_est_cny ?? ((out * r.share) / 100));
-          D.usd += r.usd; D.req += r.requests || 0; D.tok += r.tokens || 0; D.opus += r.opus || 0; D.fable += r.fable || 0; D.my += my; D.member += out - my;
+          // 服务器给的：已结算的部分按结算单，没结算的按回本顺序估（my_cny / member_cny）；老数据退回按比例估
+          const my = r.my_cny ?? (own ? out : (r.income_est_cny ?? ((out * r.share) / 100)));
+          const mem = r.member_cny ?? (out - my);
+          D.usd += r.usd; D.req += r.requests || 0; D.tok += r.tokens || 0; D.opus += r.opus || 0; D.fable += r.fable || 0; D.my += my; D.member += mem; D.stl += r.settled_member_cny || 0;
           const a = acc[r.key] = acc[r.key] || { key: r.key, name: (info[r.key] && info[r.key].name) || r.name || r.key, usd: 0, req: 0, tok: 0, opus: 0, fable: 0, my: 0, member: 0, by: new Array(dayList.length).fill(0), owners: new Set(), active: 0 };
-          a.usd += r.usd; a.req += r.requests || 0; a.tok += r.tokens || 0; a.opus += r.opus || 0; a.fable += r.fable || 0; a.my += my; a.member += out - my;
+          a.usd += r.usd; a.req += r.requests || 0; a.tok += r.tokens || 0; a.opus += r.opus || 0; a.fable += r.fable || 0; a.my += my; a.member += mem;
           if (!a.by[i] && r.usd > 0) a.active++;
           a.by[i] += r.usd; a.owners.add(own ? 'own' : r.owner);
           const ok = own ? 'own' : r.owner;
@@ -3559,7 +3561,7 @@
       });
       const accs = Object.values(acc).sort((a, b) => b.usd - a.usd);
       const sum = (f) => daily.reduce((s, d) => s + d[f], 0);
-      const T = { usd: sum('usd'), req: sum('req'), tok: sum('tok'), my: sum('my'), member: sum('member'), opus: sum('opus'), fable: sum('fable') };
+      const T = { usd: sum('usd'), req: sum('req'), tok: sum('tok'), my: sum('my'), member: sum('member'), stl: sum('stl'), opus: sum('opus'), fable: sum('fable') };
       const nDays = Math.max(1, daily.filter((d) => d.fetched).length);
       const best = daily.reduce((b, d) => (d.usd > (b ? b.usd : -1) ? d : b), null);
       const bo = (data.prev && data.prev.by_owner) || {};
@@ -3569,7 +3571,7 @@
       const scopeName = ownerF === 'all' ? '全部（号池）' : ownerF === 'own' ? '仅我的号' : ownerF === 'members' ? '仅成员号' : '归 ' + uname(Number(ownerF));
       const poolPct = poolUsd ? (T.usd / poolUsd) * 100 : 0;
       const ownName = (k) => (k === 'own' ? '我的号' : uname(Number(k)));
-      info2.textContent = `${lo} → ${hi} · ${nDays} 天有数据${data.days.some((d) => d.day === data.today) ? ' · 今天的数据每 15 分钟更新' : ''} · 汇率 ¥${rate}/$ · 利润按当天归属和当前结算规则估算（不含回本），实际以结算单为准${ownerF === 'all' ? '' : ` · 现在只统计「${scopeName}」，一天内归属不到半天的算我的号`}`;
+      info2.textContent = `${lo} → ${hi} · ${nDays} 天有数据${data.days.some((d) => d.day === data.today) ? ' · 今天的数据每 15 分钟更新' : ''} · 汇率 ¥${rate}/$ · 利润：已经结算的按结算单，没结算的按当前规则估算（成员先回本、回本期间不抽成）${ownerF === 'all' ? '' : ` · 现在只统计「${scopeName}」，一天内归属不到半天的算我的号`}`;
       if (!accs.length && !T.usd) {
         clear(body, h('div', { class: 'card' }, h('div', { class: 'card-body' }, emptyState(dayList.length ? '这段时间没有额度数据' : `统计从 ${data.stats_from} 开始，这段时间还没有数据`, 'chart'))));
         return;
@@ -3578,10 +3580,11 @@
       const kpis = h('div', { class: 'stats kpis' },
         kpiCard(ownerF === 'all' ? '总额度' : ownerF === 'own' ? '我的号额度' : ownerF === 'members' ? '成员号额度' : '额度', T.usd, usd, 'dollar', 'blue', { delta: prev && deltaChip(T.usd, prev.usd), sub: `日均 ${usd(T.usd / nDays)}${ownerF === 'all' ? '' : ` · 占号池 ${poolPct.toFixed(1)}%`}` }),
         kpiCard('产出（按汇率）', T.usd * rate, cny, 'activity', 'purple', { delta: prev && deltaChip(T.usd, prev.usd), sub: `每 $1 = ¥${rate}` }),
-        kpiCard('我的利润（估）', T.my, cny, 'trend', 'ok', { sub: ownerF === 'own' ? '我的号按汇率全算我的' : `我的号 ${cny(accs.filter((a) => a.owners.has('own')).reduce((s, a) => s + a.my, 0))}`, tip: '我的号按汇率全算你的；成员号按当前结算规则估算（回本期间实际不抽成），实际以结算单为准' }),
+        kpiCard('我的利润（估）', T.my, cny, 'trend', 'ok', { sub: ownerF === 'own' ? '我的号按汇率全算我的' : `我的号 ${cny(accs.filter((a) => a.owners.has('own')).reduce((s, a) => s + a.my, 0))}`, tip: '我的号按汇率全算你的；成员号已经结算的按结算单里你的抽成，没结算的按当前规则估（成员先回本，回本期间不抽成）' }),
         ownerF === 'own'
           ? kpiCard('占号池', poolPct, (v) => v.toFixed(1) + '%', 'users', 'cyan', { sub: `号池合计 ${usd(poolUsd)} · 成员号 ${usd(poolUsd - T.usd)}` })
-          : kpiCard('成员应得（估）', T.member, cny, 'users', 'cyan', { sub: data.settle.count ? `期间已结算 ${cny(data.settle.member_cny)}` : '期间还没有结算' }),
+          : kpiCard('成员应得（估）', T.member, cny, 'users', 'cyan', { sub: T.stl >= 0.005 ? (Math.abs(T.member - T.stl) < 0.005 ? `已全部结算 ${cny(T.stl)}` : `其中已结算 ${cny(T.stl)}`) : '这段时间还没有结算',
+            tip: '这段时间成员号的额度给成员的钱：已经结算的部分按结算单（不管哪天结的），没结算的按当前规则估（先回本，回本期间全归成员）' }),
         kpiCard('请求', T.req, (v) => compact(Math.round(v)), 'server', 'blue', { delta: prev && deltaChip(T.req, prev.requests), sub: `Token ${compact(T.tok)}` }),
         kpiCard('活跃账号', accs.filter((a) => a.usd > 0).length, (v) => String(Math.round(v)), 'cube', 'purple', { sub: best && best.usd ? `最高一天 ${best.day.slice(5)} ${usd(best.usd)}` : '' }));
       // 图表卡片
