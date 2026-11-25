@@ -2313,20 +2313,23 @@
   // ---------- 回本（公共） ----------
   const KIND = { open: '首期', renew: '续费', upgrade: '升级补差' };
   const SEAT_CN = { premium: '高级', standard: '标准' };
-  // 回本按可结算收入算：已结算的回本 + 还没结算（可结算）的回本都算已回，不等结算单确认
+  // 已回本 = 成员的全部收入（回本部分 + 分成拿到的；已结算 + 还没结算的），累计够了成本就是回本了（11-25 起结算也按这个算）
   function recoveryBar(total, done) {
     const a = total > 0 ? Math.min(100, Math.max(0, (done / total) * 100)) : 0;
     const i1 = h('i', { class: 'done' });
     i1.style.width = a + '%';
     return h('div', { class: 'rbar', title: `已回本 ${cny(done)} / 成本 ${cny(total)}` }, i1);
   }
-  function lineRecovery(L) {
+  // 一张单 / 本期：结算前成员已经拿到的 + 这一期给成员的钱。extra：还没结算的（到现在），给了就按「已结算 + 到现在」算
+  function lineRecovery(L, extra) {
     if (!L || !L.cost_total_cny) return null;
-    const got = r2((L.recovered_before_cny || 0) + (L.recover_cny || 0));
-    const txt = L.remaining_cny > 0
-      ? `回本中：成本 ${cny(L.cost_total_cny)} · 已回 ${cny(got)}${L.recover_cny ? `（含本次 ${cny(L.recover_cny)}）` : ''} · 还差 ${cny(L.remaining_cny)}`
-      : `已回本（成本 ${cny(L.cost_total_cny)}${L.recover_cny ? `，本次回 ${cny(L.recover_cny)}` : ''}）`;
-    return h('div', { class: 'rec-mini' }, recoveryBar(L.cost_total_cny, got), h('span', { text: txt }));
+    const add = extra ? extra.member_cny : (L.member_cny || 0);
+    const inc = r2((L.recovered_before_cny || 0) + add), got = Math.min(L.cost_total_cny, inc), left = r2(Math.max(0, L.cost_total_cny - inc));
+    const what = extra ? '还没结算的' : '本次';
+    const txt = left > 0
+      ? `回本中：成本 ${cny(L.cost_total_cny)} · 已回 ${cny(got)}${add ? `（含${what} ${cny(add)}）` : ''} · 还差 ${cny(left)}`
+      : `已回本（成本 ${cny(L.cost_total_cny)}）· 成员已收 ${cny(inc)}${add ? `（含${what} ${cny(add)}）` : ''}`;
+    return h('div', { class: 'rec-mini', title: '已回本按成员的全部收入算（回本部分 + 分成拿到的）' }, recoveryBar(L.cost_total_cny, got), h('span', { text: txt }));
   }
   function chargesTable(charges, { admin = false, reload } = {}) {
     if (!charges.length) return h('div', { class: 'muted small', text: '还没有成本记录' });
@@ -2389,20 +2392,21 @@
       }));
     };
     for (const m of ms) {
-      const got = r2(m.recovered_cny + (m.pending_recover_cny || 0));
+      const inc = r2(m.recovered_cny + (m.pending_recover_cny || 0)), got = Math.min(m.cost_total_cny, inc);
       const exp = h('tr', { class: 'exp-row', hidden: true }, h('td', { colspan: '6' }, chargesTable(costs.charges.filter((x) => x.user_id === m.user_id), { admin: true, reload })));
       const tiles = acctTiles(m);
       const tr = h('tr', { class: 'click' + (tiles ? ' has-accts' : ''), onclick: () => { exp.hidden = !exp.hidden; tr.classList.toggle('open', !exp.hidden); } },
         h('td', { 'data-label': '' }, userName2(m.user_id, m.username), m.pending_seat ? h('div', { class: 'text-warn xs', text: `${m.pending_seat} 笔成本待定（未标席位）` }) : h('div', { class: 'faint xs', text: '点击看成本记录' })),
         h('td', { 'data-label': '进度', style: { minWidth: '150px' } }, recoveryBar(m.cost_total_cny, got)),
         h('td', { 'data-label': '成本合计', class: 'num' }, cny(m.cost_total_cny)),
-        h('td', { 'data-label': '已回本', class: 'num', title: m.pending_recover_cny ? `已结算 ${cny(m.recovered_cny)} + 还没结算 ${cny(m.pending_recover_cny)}` : null }, cny(got)),
+        h('td', { 'data-label': '已回本', class: 'num', title: `成员全部收入 ${cny(inc)} = 已结算 ${cny(m.recovered_cny)} + 还没结算 ${cny(m.pending_recover_cny || 0)}` }, cny(got),
+          inc > got + 0.004 ? h('div', { class: 'faint xs', text: `成员已收 ${cny(inc)}` }) : null),
         h('td', { 'data-label': '还差', class: 'num ' + (m.remaining_cny > 0 ? 'text-warn' : 'text-ok') }, m.remaining_cny > 0 ? cny(m.remaining_cny) : '已回本'),
         h('td', { class: 'faint' }, icon('down', 'icon icon-sm chev')));
       append(tbody, tr, tiles ? h('tr', { class: 'rec-acc-row' }, h('td', { colspan: '6' }, tiles)) : null, exp);
     }
     return h('div', { class: 'card', style: { marginTop: '16px' } },
-      h('div', { class: 'card-head' }, h('h3', { class: 'card-title' }, icon('trend'), '回本进度'), h('span', { class: 'faint xs', text: '回本前收入全归成员、不分成。已回本按可结算收入算（已结算 + 还没结算的）；各号按每张单的额度占比分摊' })),
+      h('div', { class: 'card-head' }, h('h3', { class: 'card-title' }, icon('trend'), '回本进度'), h('span', { class: 'faint xs', text: '回本前收入全归成员、不分成。已回本 = 成员的全部收入（回本 + 分成拿到的，已结算 + 还没结算的），够了成本就开始分成；各号按每张单的额度占比分摊' })),
       h('div', { class: 'table-wrap' }, h('table', { class: 'table responsive' }, h('thead', {}, h('tr', {}, ['成员', '进度', '成本合计', '已回本', '还差', ''].map((t) => h('th', { text: t })))), tbody)));
   }
   // 账号 + 各自的结算区间。额度来源：counter = 卡片“今日”读数相减（请求跑完的时刻记，和网页一致）；slices = 「用量统计」查询（读数覆盖不到的时段）
@@ -2479,6 +2483,11 @@
       m.prior_day ? xItem('未结算（到现在）', cny(ex.now.member_cny), `额度 ${usd(ex.now.usd)} · 截至 ${fmtSec(ex.now.cutoff).slice(11, 16)}`, `到现在前 2 分钟还没结算的全部（含今天）；我的抽成 ${cny(ex.now.admin_cny)}`) : null,
       xItem(`昨日 ${ex.yday.day.slice(5)}`, cny(ex.yday.member_cny), `额度 ${usd(ex.yday.usd)} · ${yState(ex.yday)}`,
         `北京时间 ${ex.yday.day} 一整天给成员的钱（不含调整项）；我的抽成 ${cny(ex.yday.admin_cny)}${ex.yday.approx ? '\n部分按「用量统计」估算' : ''}`)) : null;
+    // 累计：成员总收入 / 我的总分成 = 有效结算单 + 还没结算的（到现在，预估）；结算页只有管理员能打开
+    const T = m.totals;
+    const totals = T ? h('div', { class: 'mc-extra' },
+      xItem('成员总收入', cny(T.member_cny), `已结算 ${cny(T.settled_member_cny)} + 未结算 ${cny(T.unsettled_member_cny)}`, '这位成员所有已结算的收入 + 还没结算的（到现在前 2 分钟，预估）'),
+      xItem('我的总分成', cny(T.admin_cny), `已结算 ${cny(T.settled_admin_cny)} + 未结算 ${cny(T.unsettled_admin_cny)}`, '你从这位成员名下号抽到的全部（已结算 + 还没结算的预估）；成员看不到')) : null;
     const parts = m.valid ? [
       h('div', { class: 'mc-range', text: m.start ? `待结算 ${fmtSec(m.start)} → ${fmtSec(m.cutoff)}` : '暂时没有待结算的时间段' }),
       h('div', { class: 'mc-amts' }, amt('额度', usd(r2(L.usd + L.adjust_usd))), amt('毛收入', cny(L.gross_cny)),
@@ -2486,7 +2495,8 @@
       h('div', { class: 'mc-pay' }, h('div', {}, h('small', { text: m.prior_day ? '今天结算 · 应付（截至昨天）' : '未结算收益 · 应付（预估）' }), h('div', { class: 'mc-big', text: cny(L.member_cny) })),
         rate && L.member_cny ? h('div', { class: 'mc-usdt', text: `≈ ${usdtFmt(r2(L.member_cny / rate.rate))}` }) : null),
       extra,
-      lineRecovery(L),
+      totals,
+      lineRecovery(L, ex ? ex.now : null),
     ] : [h('div', { class: 'loading-box small' }, icon('refresh', 'icon icon-sm spin'), h('span', { text: '预估更新中；点“结算”会直接精确查询' }))];
     const up = (st.up_points || [])[0];
     const chips = [m.prior_day ? h('span',{class:'chip chip-blue',text:'结到昨天'}) : null, unpaid ? h('span', { class: 'chip chip-warn', text: `还有 ${cny(unpaid)} 没付` }) : null,
