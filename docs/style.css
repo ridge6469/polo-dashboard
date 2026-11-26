@@ -536,8 +536,6 @@ td.money-strong, b.money-strong { color: var(--primary-text); }
 .lp:not(.on) .lp-sw { opacity: .35; }
 .lp:hover { border-color: var(--primary, #6366f1); }
 .lp-sw { display: inline-block; flex: none; width: 18px; height: 0; border-top: 3px solid; }
-.lp-sw.dashed { border-top-style: dashed; }
-.lp-sw.dotted { border-top-style: dotted; }
 .lp-act { color: var(--muted); border-style: dashed; }
 @media (max-width: 760px) { .lp { padding: 5px 10px; min-height: 30px; } }
 .cmp-chips { margin: 0 0 10px; }

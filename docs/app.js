@@ -1235,9 +1235,15 @@
     return { el: btn, reset: () => { left = typeof sec === 'number' ? sec : 0; paint(); }, sync: () => sec === 'sync' };
   }
 
-  // 图上显示哪些线：一排可点的标签（代替图例）。items: [{ key, label, color, dash: 'dashed' | 'dotted', def }]，选择按 key 记在 localStorage
+  // 图上显示哪些线：一排可点的标签（代替图例）。items: [{ key, label, color, def }]，选择按 key 记在 localStorage
   // 前几天逐日的线：避开今天（蓝）、峰值（紫）、昨天（橙）、平均（绿）的颜色
-  const DAY_COLORS = ['#ef4444', '#06b6d4', '#ec4899', '#84cc16', '#64748b', '#a855f7', '#0ea5e9'];
+  // 前几天逐日的颜色：和今天（蓝 / 紫）、昨天（橙）、近几天平均（绿）都分得开
+  const DAY_COLORS = ['#ef4444', '#06b6d4', '#ec4899', '#84cc16', '#64748b', '#a0522d', '#0f766e'];
+  // 对照图的线：一样粗、都是实线，只靠颜色分；前后都没数据的单个点画个小圆点（不然看不见）
+  const LINE_W = 2;
+  const solo = (arr) => arr.map((v, i) => (v !== null && v !== undefined && (arr[i - 1] === null || arr[i - 1] === undefined) && (arr[i + 1] === null || arr[i + 1] === undefined)
+    ? { value: v, symbol: 'circle', symbolSize: 4 } : v));
+  const flatLine = (name, data, color, extra) => Object.assign({ name, type: 'line', symbol: 'none', connectNulls: false, data: solo(data), lineStyle: { width: LINE_W, color }, itemStyle: { color } }, extra || {});
   function linePicker(storeKey, items, onChange) {
     let saved = {};
     try { saved = JSON.parse(localStorage.getItem(storeKey) || '{}') || {}; } catch { saved = {}; }
@@ -1273,12 +1279,12 @@
     append(main, h('div', { class: 'card' }, h('div', { class: 'card-head' },
       h('h2', { class: 'card-title' }, icon('activity'), '每日并发'), h('div', { class: 'toolbar' }, grainSeg, today, dateInput)),
       h('div', { class: 'card-body' }, stats, note, picks, plot,
-        h('p', { class: 'hint', text: '来自 Polo 的「总池实时并发」，约每 15 秒采样一次。每 5 分钟显示样本平均和最高在飞数；没有读数的时段留空，不算作 0。虚线是前一天、点线是前几天的平均（同一时段的 5 分钟平均）；图上方「显示」那一排可以选显示哪些线（含前几天逐日的线），会记住；右上角可以换成每 30 分钟、每小时一个点，更好对比。' }))),
+        h('p', { class: 'hint', text: '来自 Polo 的「总池实时并发」，约每 15 秒采样一次。每 5 分钟显示样本平均和最高在飞数；没有读数的时段留空，不算作 0。前一天、前几天的平均和逐日的线也都是同一时段的 5 分钟平均，用颜色区分；图上方「显示」那一排可以选显示哪些线（含前几天逐日的线），会记住；右上角可以换成每 30 分钟、每小时一个点，更好对比。' }))),
       h('div', { class: 'card', style: { marginTop: '16px' } }, h('div', { class: 'card-head' }, h('h2', { class: 'card-title' }, icon('log'), '近七天对照')),
         h('div', { class: 'table-wrap' }, h('table', { class: 'mini-table flush day-table' }, dhead, days))));
     const num = (v) => v == null ? '—' : v.toLocaleString('zh-CN');
     const hhmm = (s) => new Date((s + 8 * 3600) * 1000).toISOString().slice(11, 16);
-    // 对照：前一天（虚线）、前几天同一时段的平均（点线）、前几天逐日（默认不显示，点图例打开）
+    // 对照：前一天、前几天同一时段的平均、前几天逐日（默认不显示，点图例打开）
     const cmpOf = (d) => {
       const cm = (d.compare && d.compare.days) || [], yd = cm.find((x) => x.day === addDays(d.day, -1)) || null;
       const avgAt = (i) => { const vs = cm.map((x) => x.avg[i]).filter((v) => v !== null && v !== undefined); return vs.length ? Math.round((vs.reduce((a, v) => a + v, 0) / vs.length) * 10) / 10 : null; };
@@ -1307,8 +1313,8 @@
       const items = [
         { key: 'avg', name: '平均并发', label: isToday ? '今天平均' : `${d.day.slice(5)} 平均`, color: PALETTE[0], def: true },
         { key: 'peak', name: '采样峰值', label: isToday ? '今天峰值' : `${d.day.slice(5)} 峰值`, color: PALETTE[1], def: true },
-        yd ? { key: 'yd', name: ydName, label: ydName, color: '#f59e0b', dash: 'dashed', def: true } : null,
-        avgN ? { key: 'avgN', name: avgName, label: avgName, color: '#10b981', dash: 'dotted', def: true } : null,
+        yd ? { key: 'yd', name: ydName, label: ydName, color: '#f59e0b', def: true } : null,
+        avgN ? { key: 'avgN', name: avgName, label: avgName, color: '#10b981', def: true } : null,
         ...older.map((x, k) => ({ key: 'd' + back(x.day), name: olderName(x), label: olderName(x), color: DAY_COLORS[k % DAY_COLORS.length], def: false })),
       ].filter(Boolean);
       const pk = linePicker('polo_pool_lines', items, () => draw());
@@ -1325,16 +1331,16 @@
           if (pk.isOn('avg') || pk.isOn('peak')) out += row ? tr(`${nm} ${[pk.isOn('avg') && '平均', pk.isOn('peak') && '峰值'].filter(Boolean).join(' / ')}`, [pk.isOn('avg') && num(row.avg), pk.isOn('peak') && num(row.peak)].filter(Boolean).join(' / ')) : tr(nm, '没有采样');
           if (yd && pk.isOn('yd')) out += tr(ydName, num(yd.avg[i]) + (row ? diff(row.avg, yd.avg[i]) : ''));
           if (avgN && pk.isOn('avgN')) out += tr(avgName, num(avgN[i]) + (row ? diff(row.avg, avgN[i]) : ''));
-          for (const p of ps) if (older.some((x) => olderName(x) === p.seriesName)) out += tr(p.seriesName, num(p.value));
+          for (const p of ps) if (older.some((x) => olderName(x) === p.seriesName)) out += tr(p.seriesName, num(p.value && typeof p.value === 'object' ? p.value.value : p.value));
           return out;
         } },
         xAxis: axisX(theme, bins.map((_, i) => hhmm(d.start + i * step)), { boundaryGap: false }), yAxis: axisY(theme, (v) => num(v), { min: 0, minInterval: 1 }),
         series: [
-          { name: '平均并发', type: 'line', showSymbol: true, symbolSize: G > 1 ? 4 : 3, connectNulls: false, data: bins.map((r) => (r ? r.avg : null)), lineStyle: { width: 2.5, color: PALETTE[0] }, itemStyle: { color: PALETTE[0] }, z: 5 },
-          { name: '采样峰值', type: 'line', showSymbol: true, symbolSize: 2, connectNulls: false, data: bins.map((r) => (r ? r.peak : null)), lineStyle: { width: 1, opacity: 0.55, color: PALETTE[1] }, itemStyle: { color: PALETTE[1] }, z: 4 },
-          yd ? { name: ydName, type: 'line', showSymbol: false, connectNulls: false, data: yd.avg, lineStyle: { width: 2, type: 'dashed', color: '#f59e0b' }, itemStyle: { color: '#f59e0b' }, z: 3 } : null,
-          avgN ? { name: avgName, type: 'line', showSymbol: false, connectNulls: false, data: avgN, lineStyle: { width: 2, type: 'dotted', color: '#10b981' }, itemStyle: { color: '#10b981' }, z: 3 } : null,
-          ...older.map((x, k) => ({ name: olderName(x), type: 'line', showSymbol: false, connectNulls: false, data: x.avg, lineStyle: { width: 1.4, opacity: 0.85, color: DAY_COLORS[k % DAY_COLORS.length] }, itemStyle: { color: DAY_COLORS[k % DAY_COLORS.length] }, z: 2 })),
+          flatLine('平均并发', bins.map((r) => (r ? r.avg : null)), PALETTE[0], { z: 5 }),
+          flatLine('采样峰值', bins.map((r) => (r ? r.peak : null)), PALETTE[1], { z: 4 }),
+          yd ? flatLine(ydName, yd.avg, '#f59e0b', { z: 3 }) : null,
+          avgN ? flatLine(avgName, avgN, '#10b981', { z: 3 }) : null,
+          ...older.map((x, k) => flatLine(olderName(x), x.avg, DAY_COLORS[k % DAY_COLORS.length], { z: 2 })),
         ].filter(Boolean) }, true);
     }
     function select(day) {
@@ -3910,8 +3916,8 @@
         const back = (day) => Math.round((Date.parse(ID.ref) - Date.parse(day)) / 86400000);
         const items = [
           { key: 'ref', name: refN, label: refN, color: '#3b82f6', def: true },
-          ydV ? { key: 'yd', name: ydName, label: ydName, color: '#f59e0b', dash: 'dashed', def: true } : null,
-          avgV ? { key: 'avg', name: avgName, label: avgName, color: '#10b981', dash: 'dotted', def: true } : null,
+          ydV ? { key: 'yd', name: ydName, label: ydName, color: '#f59e0b', def: true } : null,
+          avgV ? { key: 'avg', name: avgName, label: avgName, color: '#10b981', def: true } : null,
           ...older.map((o, i) => ({ key: 'd' + back(o.day), name: o.day.slice(5), label: o.day.slice(5), color: DAY_COLORS[i % DAY_COLORS.length], def: false })),
         ].filter(Boolean);
         const selOf = () => Object.fromEntries(items.map((x) => [x.name, pk.isOn(x.key)]));
@@ -3930,11 +3936,11 @@
           yAxis: axisY(t, shortCny),
           series: [
             hrMode ? { name: refN, type: 'bar', data: refV, barMaxWidth: 18, itemStyle: { color: grad(E, '#60a5fa', '#7c3aed'), borderRadius: [5, 5, 0, 0] }, z: 3 }
-              : { name: refN, type: 'line', data: refV, showSymbol: false, lineStyle: { width: 3, color: '#3b82f6' }, itemStyle: { color: '#3b82f6' }, areaStyle: { color: grad(E, 'rgba(59,130,246,.20)', 'rgba(59,130,246,0)') }, z: 4,
+              : { name: refN, type: 'line', data: refV, showSymbol: false, lineStyle: { width: LINE_W, color: '#3b82f6' }, itemStyle: { color: '#3b82f6' }, areaStyle: { color: grad(E, 'rgba(59,130,246,.20)', 'rgba(59,130,246,0)') }, z: 4,
                 markLine: ID.asof ? { symbol: 'none', silent: true, label: { formatter: '到 ' + atLbl, color: t.muted, fontSize: 11 }, lineStyle: { color: t.muted, type: 'dashed' }, data: [{ xAxis: Math.max(0, cut - 1) }] } : undefined },
-            ydV ? { name: ydName, type: 'line', data: ydV, showSymbol: false, smooth: hrMode ? 0.3 : false, lineStyle: { width: 2, type: 'dashed', color: '#f59e0b' }, itemStyle: { color: '#f59e0b' }, z: 3 } : null,
-            avgV ? { name: avgName, type: 'line', data: avgV, showSymbol: false, smooth: hrMode ? 0.3 : false, lineStyle: { width: 2, type: 'dotted', color: '#10b981' }, itemStyle: { color: '#10b981' }, z: 3 } : null,
-            ...older.map((o, i) => ({ name: o.day.slice(5), type: 'line', data: o.v, showSymbol: false, smooth: hrMode ? 0.3 : false, lineStyle: { width: 1.4, opacity: 0.85, color: DAY_COLORS[i % DAY_COLORS.length] }, itemStyle: { color: DAY_COLORS[i % DAY_COLORS.length] }, z: 2 })),
+            ydV ? { name: ydName, type: 'line', data: ydV, showSymbol: false, smooth: hrMode ? 0.3 : false, lineStyle: { width: LINE_W, color: '#f59e0b' }, itemStyle: { color: '#f59e0b' }, z: 3 } : null,
+            avgV ? { name: avgName, type: 'line', data: avgV, showSymbol: false, smooth: hrMode ? 0.3 : false, lineStyle: { width: LINE_W, color: '#10b981' }, itemStyle: { color: '#10b981' }, z: 3 } : null,
+            ...older.map((o, i) => ({ name: o.day.slice(5), type: 'line', data: o.v, showSymbol: false, smooth: hrMode ? 0.3 : false, lineStyle: { width: LINE_W, color: DAY_COLORS[i % DAY_COLORS.length] }, itemStyle: { color: DAY_COLORS[i % DAY_COLORS.length] }, z: 2 })),
           ].filter(Boolean),
         }));
       }
