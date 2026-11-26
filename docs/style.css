@@ -529,6 +529,15 @@ td.money-strong, b.money-strong { color: var(--primary-text); }
 .sum-chips > div { display: flex; flex-direction: column; gap: 2px; padding: 10px 14px; border-radius: 12px; background: var(--surface-2); min-width: 120px; }
 .sum-chips small { font-size: 11.5px; color: var(--muted); }
 .sum-chips b { font-size: 17px; font-variant-numeric: tabular-nums; }
+.cmp-chips { margin: 0 0 10px; }
+.cmp-chips b { display: inline-flex; align-items: center; gap: 2px; flex-wrap: wrap; }
+.cmp-chips > div > span.faint { line-height: 1.35; }
+@media (max-width: 760px) {
+  .cmp-chips { gap: 8px; }
+  .cmp-chips > div { flex: 1 1 calc(50% - 4px); min-width: 0; padding: 8px 10px; }
+  .cmp-chips b { font-size: 15px; }
+  .cmp-chips > div > span.faint { font-size: 10.5px; overflow-wrap: anywhere; }
+}
 .settle-card .card-head { border-bottom: 0; padding-bottom: 10px; }
 .settle-card.voided { opacity: .6; }
 .btn-paid { background: var(--ok-bg); color: var(--ok); border-color: transparent; }

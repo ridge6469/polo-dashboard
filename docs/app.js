@@ -1223,33 +1223,71 @@
 
   function pagePoolTrend() {
     const { main } = appLayout({ active: '#/pool-trend', title: '总池并发走势', desc: '整个号池同时在处理多少个请求 · 北京时间' });
-    let choice = 'today', seq = 0, data = null, chart = null;
+    let choice = 'today', seq = 0, data = null, chart = null, grain = Number(localStorage.getItem('polo_pool_grain')) || 6;
+    if (![1, 6, 12].includes(grain)) grain = 6;
+    const grainSeg = h('div', { class: 'seg seg-sm', title: '图上每个点代表多长一段' });
+    const paintGrain = () => clear(grainSeg, [[1, '5 分钟'], [6, '30 分钟'], [12, '1 小时']].map(([g, l]) => h('button', { type: 'button', class: grain === g ? 'on' : '', onclick: () => { grain = g; localStorage.setItem('polo_pool_grain', String(g)); paintGrain(); draw(); } }, l)));
+    paintGrain();
     const dateInput = h('input', { class: 'input input-sm', type: 'date', 'aria-label': '查看日期（北京时间）', style: { width: 'auto' } });
     const today = h('button', { class: 'btn btn-secondary btn-sm', type: 'button', onclick: () => select('today') }, '今天');
     const note = h('p', { class: 'hint', role: 'status' });
-    const stats = h('div', { class: 'stats' }), plot = h('div', { style: { height: '280px', width: '100%' }, 'aria-label': '全天每五分钟的平均在飞和峰值' });
-    const days = h('tbody');
+    const stats = h('div', { class: 'stats' }), plot = h('div', { style: { height: '320px', width: '100%' }, 'aria-label': '全天每五分钟的平均在飞和峰值，以及前几天同一时段的对照' });
+    const days = h('tbody'), dhead = h('thead');
     append(main, h('div', { class: 'card' }, h('div', { class: 'card-head' },
-      h('h2', { class: 'card-title' }, icon('activity'), '每日并发'), h('div', { class: 'toolbar' }, today, dateInput)),
+      h('h2', { class: 'card-title' }, icon('activity'), '每日并发'), h('div', { class: 'toolbar' }, grainSeg, today, dateInput)),
       h('div', { class: 'card-body' }, stats, note, plot,
-        h('p', { class: 'hint', text: '来自 Polo 的「总池实时并发」，约每 15 秒采样一次。每 5 分钟显示样本平均和最高在飞数；没有读数的时段留空，不算作 0。' }))),
+        h('p', { class: 'hint', text: '来自 Polo 的「总池实时并发」，约每 15 秒采样一次。每 5 分钟显示样本平均和最高在飞数；没有读数的时段留空，不算作 0。虚线是前一天、点线是前几天的平均（同一时段的 5 分钟平均）；点图例可以打开前几天逐日的线；右上角可以换成每 30 分钟、每小时一个点，更好对比。' }))),
       h('div', { class: 'card', style: { marginTop: '16px' } }, h('div', { class: 'card-head' }, h('h2', { class: 'card-title' }, icon('log'), '近七天对照')),
-        h('div', { class: 'table-wrap' }, h('table', { class: 'mini-table' }, h('thead', {}, h('tr', {}, ['日期', '平均并发', '采样峰值', '样本数'].map((s) => h('th', { text: s })))), days))));
+        h('div', { class: 'table-wrap' }, h('table', { class: 'mini-table' }, dhead, days))));
     const num = (v) => v == null ? '—' : v.toLocaleString('zh-CN');
     const hhmm = (s) => new Date((s + 8 * 3600) * 1000).toISOString().slice(11, 16);
+    // 对照：前一天（虚线）、前几天同一时段的平均（点线）、前几天逐日（默认不显示，点图例打开）
+    const cmpOf = (d) => {
+      const cm = (d.compare && d.compare.days) || [], yd = cm.find((x) => x.day === addDays(d.day, -1)) || null;
+      const avgAt = (i) => { const vs = cm.map((x) => x.avg[i]).filter((v) => v !== null && v !== undefined); return vs.length ? Math.round((vs.reduce((a, v) => a + v, 0) / vs.length) * 10) / 10 : null; };
+      const spans = cm.filter((x) => x.span_avg !== null && x.span_avg !== undefined);
+      const spanAvg = spans.length ? Math.round((spans.reduce((a, x) => a + x.span_avg, 0) / spans.length) * 10) / 10 : null;
+      return { cm, yd, avgAt, spanAvg, ydName: d.day === d.today ? '昨天' : '前一天' };
+    };
+    const pctOf = (a, b) => (a === null || a === undefined || b === null || b === undefined || b <= 0 ? '' : `${a >= b ? '↑' : '↓'}${Math.abs(((a - b) / b) * 100).toFixed(0)}%`);
     function draw() {
       if (!data || !chart || !data.count) return;
-      const theme = chartTheme(), b = baseOpt(theme), d = data;
-      const length = d.day === d.today ? Math.min(288, Math.max(1, Math.floor((d.as_of - d.start) / d.step) + 1)) : 288;
-      const bins = Array(length).fill(null);
-      for (const row of d.buckets) if (row.i < length) bins[row.i] = row;
-      chart.setOption({ ...b, animation: false, color: [PALETTE[0], PALETTE[1]],
-        tooltip: { ...b.tooltip, formatter: (ps) => { const i = ps[0]?.dataIndex, row = bins[i];
-          return i == null ? '' : `${hhmm(d.start + i * d.step)} – ${hhmm(d.start + (i + 1) * d.step)}<br>` +
-            (row ? `平均 ${num(row.avg)} · 峰值 ${num(row.peak)}<br>${row.count} 次采样` : '没有采样'); } },
-        xAxis: axisX(theme, bins.map((_, i) => hhmm(d.start + i * d.step)), { boundaryGap: false }), yAxis: axisY(theme, (v) => num(v), { min: 0, minInterval: 1 }),
-        series: [['avg', '平均并发'], ['peak', '采样峰值']].map(([k, name]) => ({ name, type: 'line', showSymbol: true, symbolSize: 3, connectNulls: false,
-          data: bins.map((r) => r ? r[k] : null) })) }, true);
+      const theme = chartTheme(), b = baseOpt(theme), d = data, G = grain, N = 288 / G, step = d.step * G;
+      // 按所选粒度合并：平均按样本数加权，峰值取最大；对照线取每段里有数的 5 分钟平均再平均
+      const raw = Array(288).fill(null);
+      for (const row of d.buckets) if (row.i < 288) raw[row.i] = row;
+      const bins = Array.from({ length: N }, (_, j) => {
+        const rs = raw.slice(j * G, j * G + G).filter(Boolean);
+        if (!rs.length) return null;
+        const cnt = rs.reduce((a, r) => a + r.count, 0);
+        return { avg: Math.round((rs.reduce((a, r) => a + r.avg * r.count, 0) / cnt) * 10) / 10, peak: Math.max(...rs.map((r) => r.peak)), count: cnt };
+      });
+      const merge = (arr) => Array.from({ length: N }, (_, j) => { const vs = arr.slice(j * G, j * G + G).filter((v) => v !== null && v !== undefined); return vs.length ? Math.round((vs.reduce((a, v) => a + v, 0) / vs.length) * 10) / 10 : null; });
+      const C0 = cmpOf(d), cm = C0.cm.map((x) => ({ ...x, avg: merge(x.avg) })), yd = C0.yd ? cm[C0.cm.indexOf(C0.yd)] : null, ydName = C0.ydName;
+      const avgN = cm.length ? merge(Array.from({ length: 288 }, (_, i) => C0.avgAt(i))) : null, avgName = `近 ${cm.length} 天平均`;
+      const older = cm.filter((x) => x !== yd), olderName = (x) => x.day.slice(5);
+      const tr = (k, v) => `<div class="ct-row"><span>${k}</span><b>${v}</b></div>`;
+      const diff = (a, c) => { const p = pctOf(a, c); return p ? ` <span class="${a >= c ? 'text-ok' : 'text-bad'}">${p}</span>` : ''; };
+      chart.setOption({ ...b, animation: false, legend: { ...b.legend, selected: Object.fromEntries(older.map((x) => [olderName(x), false])) },
+        grid: { left: 8, right: 14, top: 40, bottom: 6, containLabel: true },
+        tooltip: { ...b.tooltip, axisPointer: { type: 'line', lineStyle: { color: theme.border } }, formatter: (ps) => {
+          const i = ps[0] ? ps[0].dataIndex : null; if (i === null) return '';
+          const row = bins[i];
+          let out = `<div class="ct-title">${hhmm(d.start + i * step)} – ${hhmm(d.start + (i + 1) * step)}${G > 1 ? '（这段的平均）' : ''}</div>`;
+          out += row ? tr(d.day === d.today ? '今天 平均 / 峰值' : `${d.day.slice(5)} 平均 / 峰值`, `${num(row.avg)} / ${num(row.peak)}`) : tr(d.day === d.today ? '今天' : d.day.slice(5), '没有采样');
+          if (yd) out += tr(ydName, num(yd.avg[i]) + (row ? diff(row.avg, yd.avg[i]) : ''));
+          if (avgN) out += tr(avgName, num(avgN[i]) + (row ? diff(row.avg, avgN[i]) : ''));
+          for (const p of ps) if (older.some((x) => olderName(x) === p.seriesName)) out += tr(p.seriesName, num(p.value));
+          return out;
+        } },
+        xAxis: axisX(theme, bins.map((_, i) => hhmm(d.start + i * step)), { boundaryGap: false }), yAxis: axisY(theme, (v) => num(v), { min: 0, minInterval: 1 }),
+        series: [
+          { name: '平均并发', type: 'line', showSymbol: true, symbolSize: G > 1 ? 4 : 3, connectNulls: false, data: bins.map((r) => (r ? r.avg : null)), lineStyle: { width: 2.5, color: PALETTE[0] }, itemStyle: { color: PALETTE[0] }, z: 5 },
+          { name: '采样峰值', type: 'line', showSymbol: true, symbolSize: 2, connectNulls: false, data: bins.map((r) => (r ? r.peak : null)), lineStyle: { width: 1, opacity: 0.55, color: PALETTE[1] }, itemStyle: { color: PALETTE[1] }, z: 4 },
+          yd ? { name: ydName, type: 'line', showSymbol: false, connectNulls: false, data: yd.avg, lineStyle: { width: 2, type: 'dashed', color: '#f59e0b' }, itemStyle: { color: '#f59e0b' }, z: 3 } : null,
+          avgN ? { name: avgName, type: 'line', showSymbol: false, connectNulls: false, data: avgN, lineStyle: { width: 2, type: 'dotted', color: '#10b981' }, itemStyle: { color: '#10b981' }, z: 3 } : null,
+          ...older.map((x, k) => ({ name: olderName(x), type: 'line', showSymbol: false, connectNulls: false, data: x.avg, lineStyle: { width: 1.2, opacity: 0.75, color: PALETTE[(k + 4) % PALETTE.length] }, itemStyle: { color: PALETTE[(k + 4) % PALETTE.length] }, z: 2 })),
+        ].filter(Boolean) }, true);
     }
     function select(day) {
       choice = day; data = null; plot.hidden = true; clear(stats); clear(days); load();
@@ -1262,12 +1300,21 @@
         if (!valid()) return;
         data = d; dateInput.value = d.day; dateInput.max = d.today;
         const stale = d.day === d.today && d.as_of - d.last_at > 150;
-        clear(stats, statCard(d.day === d.today && !stale ? '最新并发' : '末次并发', num(d.last), 'bolt', 'purple', d.last_at ? hhmm(d.last_at) + ' 采样' : '暂无采样'),
-          statCard('当天平均', num(d.avg), 'activity', 'blue', `${num(d.count)} 次采样`),
-          statCard('当天峰值', num(d.peak), 'trend', 'ok', d.peak_at ? hhmm(d.peak_at) + ' 首次达到' : '暂无采样'));
+        const isToday = d.day === d.today, C = cmpOf(d), cutTxt = isToday ? hhmm(d.start + d.compare.cut) : '';
+        const curI = d.last_at ? Math.min(287, Math.floor((d.last_at - d.start) / d.step)) : null;
+        const ydSpan = C.yd ? C.yd.span_avg : null;
+        clear(stats, statCard(isToday && !stale ? '最新并发' : '末次并发', num(d.last), 'bolt', 'purple', d.last_at ? hhmm(d.last_at) + ' 采样' : '暂无采样'),
+          statCard(isToday ? '今天平均（到现在）' : '当天平均', num(d.avg), 'activity', 'blue',
+            ydSpan !== null && ydSpan !== undefined ? `${C.ydName}${isToday ? '同时段' : ''} ${num(ydSpan)} ${pctOf(d.avg, ydSpan)}${C.spanAvg !== null ? ` · 近 ${C.cm.length} 天 ${num(C.spanAvg)} ${pctOf(d.avg, C.spanAvg)}` : ''}` : `${num(d.count)} 次采样`),
+          statCard('当天峰值', num(d.peak), 'trend', 'ok', d.peak_at ? hhmm(d.peak_at) + ' 首次达到' : '暂无采样'),
+          isToday
+            ? statCard('昨天同一时刻', num(C.yd && curI !== null ? C.yd.avg[curI] : null), 'clock', 'cyan', curI !== null ? `${hhmm(d.start + curI * d.step)} 那 5 分钟的平均 · 近 ${C.cm.length} 天平均 ${num(C.avgAt(curI))}` : '暂无采样')
+            : statCard(`近 ${C.cm.length} 天日均`, num(C.spanAvg), 'clock', 'cyan', C.spanAvg !== null ? `${d.day.slice(5)} ${pctOf(d.avg, C.spanAvg) || '持平'}` : '前几天没有采样'));
         note.textContent = !d.count ? `${d.day} 还没有采样记录。` : stale ? '采样暂未更新，显示最后一次真实读数。' : `${d.day} · 最新样本 ${hhmm(d.last_at)}${choice === 'today' ? ' · 每 15 秒自动更新' : ''}`;
+        const spanCol = isToday && d.compare.cut < 86400, spanOf = (r) => (r.day === d.day ? d.avg : ((C.cm.find((x) => x.day === r.day) || {}).span_avg ?? null));
+        clear(dhead, h('tr', {}, ['日期', '平均并发', spanCol ? `00:00–${cutTxt} 平均` : null, '采样峰值', '样本数'].filter(Boolean).map((t) => h('th', { text: t }))));
         clear(days, d.days.length ? d.days.map((r) => h('tr', {}, h('td', {}, h('button', { class: 'btn btn-ghost btn-sm', type: 'button', onclick: () => select(r.day === d.today ? 'today' : r.day) }, r.day)),
-          ...[r.avg, r.peak, r.count].map((v) => h('td', { text: num(v) })))) : h('tr', {}, h('td', { colspan: '4', text: '这七天没有采样记录' })));
+          ...[r.avg, spanCol ? spanOf(r) : undefined, r.peak, r.count].filter((v) => v !== undefined).map((v) => h('td', { text: num(v) })))) : h('tr', {}, h('td', { colspan: spanCol ? '5' : '4', text: '这七天没有采样记录' })));
         plot.hidden = !d.count;
         if (d.count) { await loadECharts(); if (!valid()) return; chart = chart || mkChart(plot); chart.resize(); draw(); }
       } catch (e) { if (valid()) note.textContent = '读取失败：' + errText(e) + '。可重新选择日期重试。'; }
@@ -3434,10 +3481,10 @@
     const step = (t) => { if (!el.isConnected && t - t0 > 50) return; const k = Math.min(1, (t - t0) / ms); el.textContent = fmt(to * (1 - Math.pow(1 - k, 3))); if (k < 1) requestAnimationFrame(step); };
     requestAnimationFrame(step);
   }
-  function deltaChip(cur, prev) {
-    if (!prev || !isFinite(prev) || prev <= 0) return null;
+  function deltaChip(cur, prev, title) {
+    if (!prev || !isFinite(prev) || prev <= 0 || cur === null || cur === undefined || !isFinite(cur)) return null;
     const p = ((cur - prev) / prev) * 100;
-    return h('span', { class: 'delta ' + (p >= 0 ? 'up' : 'down'), title: '和上一个同样长度的时间段比' }, (p >= 0 ? '↑ ' : '↓ ') + Math.abs(p).toFixed(1) + '%');
+    return h('span', { class: 'delta ' + (p >= 0 ? 'up' : 'down'), title: title || '和上一个同样长度的时间段比' }, (p >= 0 ? '↑ ' : '↓ ') + Math.abs(p).toFixed(1) + '%');
   }
   function kpiCard(label, value, fmt, iconName, tone, { delta, sub, tip } = {}) {
     const v = h('div', { class: 'stat-value' });
@@ -3479,7 +3526,7 @@
     const { main } = appLayout({ active: '#/admin/stats', title: '统计看板', desc: '每个账号每天跑了多少额度、带来多少收入和利润' });
     let preset = localStorage.getItem('polo_stats_preset') || 'month';
     let range = preset === 'custom' ? (JSON.parse(localStorage.getItem('polo_stats_custom') || 'null') || presetRange('month')) : presetRange(preset, localStorage.getItem('polo_stats_min'));
-    let ownerF = ['all', 'own', 'members'].includes(localStorage.getItem('polo_stats_scope')) ? localStorage.getItem('polo_stats_scope') : 'all', trendMode = localStorage.getItem('polo_stats_trend') || 'account', pieMode = 'account', sortKey = 'usd', sortDir = -1, data = null, seq = 0;
+    let ownerF = ['all', 'own', 'members'].includes(localStorage.getItem('polo_stats_scope')) ? localStorage.getItem('polo_stats_scope') : 'all', trendMode = localStorage.getItem('polo_stats_trend') || 'account', cmpMode = localStorage.getItem('polo_stats_cmp') === 'hour' ? 'hour' : 'cum', pieMode = 'account', sortKey = 'usd', sortDir = -1, data = null, seq = 0;
     const PRESETS = [['today', '今天'], ['yesterday', '昨天'], ['week', '本周'], ['lastweek', '上周'], ['month', '本月'], ['lastmonth', '上月'], ['7d', '近 7 天'], ['30d', '近 30 天'], ['all', '全部']];
     const seg = h('div', { class: 'seg seg-wrap' });
     const fIn = h('input', { class: 'input input-sm', type: 'date', max: bjToday() });
@@ -3586,16 +3633,37 @@
         clear(body, h('div', { class: 'card' }, h('div', { class: 'card-body' }, emptyState(dayList.length ? '这段时间没有额度数据' : `统计从 ${data.stats_from} 开始，这段时间还没有数据`, 'chart'))));
         return;
       }
+      // ---- 同一时刻对比：ref 这天（今天只到最新的 10 分钟切片）和昨天、近 N 天同一时刻（服务器 intraday）
+      const ID = data.intraday || { days: [], cut: 0 };
+      const inScope = (k) => ownerF === 'all' || (ownerF === 'own' ? k === 'own' : ownerF === 'members' ? k !== 'own' : k === ownerF);
+      const pickI = (D) => {
+        if (!D || !D.src) return null;
+        if (ownerF === 'all') return D.pool;
+        if (!D.owners) return null;  // 只有全池每小时数的日子：分不出归属
+        const out = new Array(D.pool.length).fill(0);
+        for (const [k, v] of Object.entries(D.owners)) if (inScope(k)) v.forEach((x, i) => { out[i] += x; });
+        return out;
+      };
+      const reqI = (D) => (!D || !D.src || !D.req ? null : ownerF === 'all' ? D.req.pool : D.src !== 'slices' ? null
+        : Object.entries(D.req).reduce((a, [k, v]) => a + (k !== 'pool' && inScope(k) ? v : 0), 0));
+      const cut = ID.cut || 0, sumN = (a, n) => { let x = 0; for (let i = 0; i < Math.min(n, a.length); i++) x += a[i]; return x; };
+      const refA = pickI(ID.days[0]), ydA = pickI(ID.days[1]);
+      const prevA = ID.days.slice(1).map((D) => ({ day: D.day, a: pickI(D), src: D.src })).filter((x) => x.a);
+      const refT = refA ? sumN(refA, cut) : null, ydT = ydA ? sumN(ydA, cut) : null;
+      const avgT = prevA.length ? prevA.reduce((a, x) => a + sumN(x.a, cut), 0) / prevA.length : null;
+      const atLbl = ID.asof ? fmtSec(ID.asof).slice(11, 16) : '24:00';
+      const live = !!ID.asof && dayList.length === 1 && dayList[0] === ID.ref;  // 只看今天：KPI 和昨天同一时刻比
+      const sameTip = `和昨天同一时刻比（都按 10 分钟切片算到 ${atLbl}）`;
       // KPI
       const kpis = h('div', { class: 'stats kpis' },
-        kpiCard(ownerF === 'all' ? '总额度' : ownerF === 'own' ? '我的号额度' : ownerF === 'members' ? '成员号额度' : '额度', T.usd, usd, 'dollar', 'blue', { delta: prev && deltaChip(T.usd, prev.usd), sub: `日均 ${usd(T.usd / nDays)}${ownerF === 'all' ? '' : ` · 占号池 ${poolPct.toFixed(1)}%`}` }),
-        kpiCard('产出（按汇率）', T.usd * rate, cny, 'activity', 'purple', { delta: prev && deltaChip(T.usd, prev.usd), sub: `每 $1 = ¥${rate}` }),
+        kpiCard(ownerF === 'all' ? '总额度' : ownerF === 'own' ? '我的号额度' : ownerF === 'members' ? '成员号额度' : '额度', T.usd, usd, 'dollar', 'blue', { delta: live ? deltaChip(refT, ydT, sameTip) : prev && deltaChip(T.usd, prev.usd), sub: `日均 ${usd(T.usd / nDays)}${ownerF === 'all' ? '' : ` · 占号池 ${poolPct.toFixed(1)}%`}` }),
+        kpiCard('产出（按汇率）', T.usd * rate, cny, 'activity', 'purple', { delta: live ? deltaChip(refT, ydT, sameTip) : prev && deltaChip(T.usd, prev.usd), sub: live && ydT ? `昨天同一时刻 ${cny(ydT * rate)}` : `每 $1 = ¥${rate}` }),
         kpiCard('我的利润（估）', T.my, cny, 'trend', 'ok', { sub: ownerF === 'own' ? '我的号按汇率全算我的' : `我的号 ${cny(accs.filter((a) => a.owners.has('own')).reduce((s, a) => s + a.my, 0))}`, tip: '我的号按汇率全算你的；成员号已经结算的按结算单里你的抽成，没结算的按当前规则估（成员先回本，回本期间不抽成）' }),
         ownerF === 'own'
           ? kpiCard('占号池', poolPct, (v) => v.toFixed(1) + '%', 'users', 'cyan', { sub: `号池合计 ${usd(poolUsd)} · 成员号 ${usd(poolUsd - T.usd)}` })
           : kpiCard('成员应得（估）', T.member, cny, 'users', 'cyan', { sub: T.stl >= 0.005 ? (Math.abs(T.member - T.stl) < 0.005 ? `已全部结算 ${cny(T.stl)}` : `其中已结算 ${cny(T.stl)}`) : '这段时间还没有结算',
             tip: '这段时间成员号的额度给成员的钱：已经结算的部分按结算单（不管哪天结的），没结算的按当前规则估（先回本，回本期间全归成员）' }),
-        kpiCard('请求', T.req, (v) => compact(Math.round(v)), 'server', 'blue', { delta: prev && deltaChip(T.req, prev.requests), sub: `Token ${compact(T.tok)}` }),
+        kpiCard('请求', T.req, (v) => compact(Math.round(v)), 'server', 'blue', { delta: live ? deltaChip(reqI(ID.days[0]), reqI(ID.days[1]), sameTip) : prev && deltaChip(T.req, prev.requests), sub: `Token ${compact(T.tok)}` }),
         kpiCard('活跃账号', accs.filter((a) => a.usd > 0).length, (v) => String(Math.round(v)), 'cube', 'purple', { sub: best && best.usd ? `最高一天 ${best.day.slice(5)} ${usd(best.usd)}` : '' }));
       // 图表卡片
       const card = (title, ic, chartCls, tools, sub) => {
@@ -3608,6 +3676,25 @@
       const trend = card(single ? `${dayList[0]} 每小时额度` : '每日额度', 'chart', 'chart-lg',
         single ? null : segOf([['account', '按账号'], ['owner', '按归属']], trendMode, (k) => { trendMode = k; localStorage.setItem('polo_stats_trend', k); draw(); }),
         single ? (ownerF === 'all' ? '全池（不区分归属）' : '每小时数据只有号池合计，这张图不随“统计范围”变化') : '柱子：每个账号 / 每位成员当天的额度；折线：我的利润（估）');
+      const refName = ID.ref === data.today ? '今天' : (ID.ref || '').slice(5);
+      const cmp = card(`${refName}和昨天、前几天同一时刻比`, 'trend', 'chart-lg',
+        segOf([['cum', '累计'], ['hour', '每小时']], cmpMode, (k) => { cmpMode = k; localStorage.setItem('polo_stats_cmp', k); draw(); }),
+        `${scopeName} · 产出 = 额度 × 汇率，按「用量统计」每 10 分钟的数${ID.asof ? `；今天算到 ${atLbl}（最近 45 分钟的长请求还会补记，可能略低）` : '；比全天'}`);
+      const cmpChips = h('div', { class: 'sum-chips cmp-chips' });
+      cmp.el.before(cmpChips);
+      if (refA) {
+        const avgFull = prevA.length ? prevA.reduce((a, x) => a + sumN(x.a, 144), 0) / prevA.length : null;
+        const chip = (label, v, d, sub) => h('div', {}, h('small', { text: label }), h('b', {}, cny(v * rate), d ? ' ' : null, d || null), sub ? h('span', { class: 'faint xs', text: sub }) : null);
+        append(cmpChips,
+          chip(`${refName}${ID.asof ? '到 ' + atLbl : '全天'}`, refT, null, usd(refT)),
+          ydT !== null ? chip(`昨天${ID.asof ? '同一时刻' : '全天'}`, ydT, deltaChip(refT, ydT, `${refName}比昨天${ID.asof ? '同一时刻' : ''}`), usd(ydT)) : null,
+          avgT !== null ? chip(`近 ${prevA.length} 天${ID.asof ? '同一时刻' : ''}平均`, avgT, deltaChip(refT, avgT, `${refName}比近 ${prevA.length} 天${ID.asof ? '同一时刻' : ''}的平均`), prevA.map((x) => x.day.slice(5)).join(' · ')) : null,
+          ID.asof && ydA ? chip('昨天全天', sumN(ydA, 144), null, usd(sumN(ydA, 144))) : null,
+          ID.asof && avgT > 0 && avgFull ? chip(`按近 ${prevA.length} 天的节奏，今天全天约`, (refT * avgFull) / avgT, null, '今天到现在 × 平均全天 ÷ 平均同一时刻') : null);
+      } else {
+        cmp.el.hidden = true;
+        append(cmpChips, h('div', { class: 'muted small', text: ownerF !== 'all' && ID.days[0] && ID.days[0].src === 'hourly' ? '这天只有全池每小时数，分不出归属' : '这天没有分时数据（10 分钟切片从 11-24 开始）' }));
+      }
       const rank = card('账号贡献排行', 'trend', '', null, '额度从高到低；标签是 额度 · 我的利润（估）');
       const pie = card('额度占比', 'cube', '', segOf([['account', '按账号'], ['owner', '按归属'], ['model', '按模型']], pieMode, (k) => { pieMode = k; draw(); }));
       const heat = card('24 小时分布', 'clock', '', null, ownerF === 'all' ? '全池每小时的额度（北京时间），颜色越深越多' : '号池合计（每小时数据不分账号，不随“统计范围”变化）');
@@ -3677,7 +3764,7 @@
           h('thead', {}, h('tr', {}, h('th', { class: 'sticky-col', text: '账号' }), h('th', { class: 'num', text: '合计' }), dayList.slice().reverse().map((d) => h('th', { class: 'num', text: d.slice(5) })))),
           h('tbody', {}, accs.map((a) => h('tr', {}, h('td', { class: 'sticky-col' }, acctLabel(a.key, info, a.name)), h('td', { class: 'num money-strong' }, usd(a.usd)),
             dayList.map((d, i) => i).reverse().map((i) => { const v = a.by[i]; const td = h('td', { class: 'num heat' + (v ? '' : ' faint') }, v ? usd(v) : '—'); if (v) td.style.background = `rgba(${t.dark ? '96,165,250' : '59,130,246'},${(0.06 + 0.5 * (v / mx)).toFixed(3)})`; return td; })))))));
-      const grid = h('div', { class: 'chart-grid' }, h('div', { class: 'span-2' }, trend.c), rank.c, pie.c, heat.c, model.c, reqc.c, settleCard);
+      const grid = h('div', { class: 'chart-grid' }, h('div', { class: 'span-2' }, cmp.c), h('div', { class: 'span-2' }, trend.c), rank.c, pie.c, heat.c, model.c, reqc.c, settleCard);
       clear(body, kpis, grid, acctCard, matrix);
       [...kpis.children, ...grid.children, acctCard, matrix].forEach((el, i) => { el.classList.add('rise'); el.style.animationDelay = Math.min(i, 10) * 45 + 'ms'; });
 
@@ -3710,6 +3797,49 @@
             itemStyle: { color: PALETTE[i % PALETTE.length], borderRadius: i === groups.length - 1 ? [5, 5, 0, 0] : 0 }, animationDelay: (idx) => idx * 28 + i * 40 })),
           { name: '我的利润（估）', type: 'line', yAxisIndex: 1, smooth: dayList.length > 5 ? 0.35 : false, symbol: 'circle', symbolSize: 6, showSymbol: dayList.length <= 31, data: daily.map((D) => r2(D.my)),
             lineStyle: { width: 2.5, color: '#10b981' }, itemStyle: { color: '#10b981' }, areaStyle: { color: grad(E, 'rgba(16,185,129,.22)', 'rgba(16,185,129,0)') }, z: 5, animationDelay: 300 }],
+        }));
+      }
+      // ---- 同一时刻对比图
+      if (refA) {
+        const ch0 = mkChart(cmp.el), hrMode = cmpMode === 'hour';
+        const n = hrMode ? 24 : 144, unit = hrMode ? 6 : 1;
+        const bucket = (a) => { const o = new Array(n).fill(0); a.forEach((v, i) => { o[Math.floor(i / unit)] += v * rate; }); return o; };
+        const cum = (a) => { let x = 0; return a.map((v) => r2((x += v))); };
+        const shape = (a, len) => { const b = bucket(a); const v = hrMode ? b.map(r2) : cum(b); return len === undefined ? v : v.map((x, i) => (i < len ? x : null)); };
+        const refLen = hrMode ? Math.ceil(cut / 6) : cut;
+        const refV = shape(refA, refLen), ydV = ydA ? shape(ydA) : null;
+        const others = prevA.map((x) => ({ day: x.day, v: shape(x.a) }));
+        const avgV = others.length ? others[0].v.map((_, i) => r2(others.reduce((a, o) => a + (o.v[i] || 0), 0) / others.length)) : null;
+        const labels = Array.from({ length: n }, (_, i) => (hrMode ? String(i).padStart(2, '0') + ':00' : `${String(Math.floor((i + 1) / 6)).padStart(2, '0')}:${String(((i + 1) % 6) * 10).padStart(2, '0')}`));
+        const avgName = `近 ${others.length} 天平均`, ydName = '昨天', refN = refName;
+        const older = others.filter((o) => o.day !== (ID.days[1] || {}).day);
+        const pct = (a, b) => (b > 0 && a !== null && a !== undefined ? ` <span class="${a >= b ? 'text-ok' : 'text-bad'}">${a >= b ? '↑' : '↓'}${Math.abs(((a - b) / b) * 100).toFixed(1)}%</span>` : '');
+        const tipRows = (i) => {
+          const r = refV[i], rows = [[refN, r, '']];
+          if (ydV) rows.push([ydName, ydV[i], r !== null ? pct(r, ydV[i]) : '']);
+          if (avgV) rows.push([avgName, avgV[i], r !== null ? pct(r, avgV[i]) : '']);
+          return rows;
+        };
+        const sel = Object.fromEntries(older.map((o) => [o.day.slice(5), false]));
+        ch0.setOption(Object.assign(baseOpt(t), {
+          legend: Object.assign(baseOpt(t).legend, { selected: sel }),
+          tooltip: Object.assign(baseOpt(t).tooltip, { axisPointer: { type: hrMode ? 'shadow' : 'line', lineStyle: { color: t.border } }, formatter: (ps) => {
+            const i = ps[0] ? ps[0].dataIndex : null; if (i === null) return '';
+            const head = hrMode ? `${labels[i]} – ${String(i + 1).padStart(2, '0')}:00${hrMode ? '（这一小时）' : ''}` : `00:00 → ${labels[i]}（累计）`;
+            const extra = ps.filter((p) => older.some((o) => o.day.slice(5) === p.seriesName)).map((p) => [p.seriesName, p.value, '']);
+            return `<div class="ct-title">${head}</div>` + [...tipRows(i), ...extra].map(([k, v, d]) => `<div class="ct-row"><span>${escHtml(k)}</span><b>${v === null || v === undefined ? '—' : cny(v)}${d}</b></div>`).join('');
+          } }),
+          grid: { left: 8, right: 14, top: 40, bottom: 6, containLabel: true },
+          xAxis: axisX(t, labels, hrMode ? {} : { boundaryGap: false, axisLabel: { color: t.muted, fontSize: 11, interval: 17 } }),
+          yAxis: axisY(t, shortCny),
+          series: [
+            hrMode ? { name: refN, type: 'bar', data: refV, barMaxWidth: 18, itemStyle: { color: grad(E, '#60a5fa', '#7c3aed'), borderRadius: [5, 5, 0, 0] }, z: 3 }
+              : { name: refN, type: 'line', data: refV, showSymbol: false, lineStyle: { width: 3, color: '#3b82f6' }, itemStyle: { color: '#3b82f6' }, areaStyle: { color: grad(E, 'rgba(59,130,246,.20)', 'rgba(59,130,246,0)') }, z: 4,
+                markLine: ID.asof ? { symbol: 'none', silent: true, label: { formatter: '到 ' + atLbl, color: t.muted, fontSize: 11 }, lineStyle: { color: t.muted, type: 'dashed' }, data: [{ xAxis: Math.max(0, cut - 1) }] } : undefined },
+            ydV ? { name: ydName, type: 'line', data: ydV, showSymbol: false, smooth: hrMode ? 0.3 : false, lineStyle: { width: 2, type: 'dashed', color: '#f59e0b' }, itemStyle: { color: '#f59e0b' }, z: 3 } : null,
+            avgV ? { name: avgName, type: 'line', data: avgV, showSymbol: false, smooth: hrMode ? 0.3 : false, lineStyle: { width: 2, type: 'dotted', color: '#10b981' }, itemStyle: { color: '#10b981' }, z: 3 } : null,
+            ...older.map((o, i) => ({ name: o.day.slice(5), type: 'line', data: o.v, showSymbol: false, smooth: hrMode ? 0.3 : false, lineStyle: { width: 1.2, opacity: 0.7, color: PALETTE[(i + 4) % PALETTE.length] }, itemStyle: { color: PALETTE[(i + 4) % PALETTE.length] }, z: 2 })),
+          ].filter(Boolean),
         }));
       }
       // ---- 排行
