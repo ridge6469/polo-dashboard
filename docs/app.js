@@ -2778,7 +2778,7 @@
   }
 
   async function settleUpstream(body) {
-    const [st, rates] = await Promise.all([api('GET', '/admin/settle/up/state'), api('GET', '/admin/settle/rates').catch(() => null), loadECharts().catch(() => null)]);
+    const [st] = await Promise.all([api('GET', '/admin/settle/up/state'), loadECharts().catch(() => null)]);
     rememberUsers(st.users);
     const info = acctMap(st.accounts);
     const reload = () => settleUpstream(body);
@@ -2788,25 +2788,21 @@
     const last = act[0] || null;
     // 估算收入：填了上家单价就用它，没填就按最近一次收款的单价
     const pe = st.price_est || {};
-    const estM = (u) => (pe.price && pe.currency === 'USDT' ? `≈ ${curFmt(r2(u * pe.price), pe.currency)}${pe.src === 'last' ? '（按上次收款单价）' : ''}` : null);
-    // 折合人民币：单价是 USDT 的再乘现在的 USDT 汇率；单价本来就是人民币的直接乘
-    const rate = rateOf(rates), rateTxt = rate ? `${RATE_LABEL[rates.default] || 'USDT 汇率'} ¥${rate.rate}` : '';
-    const priceTxt = pe.price ? `${pe.src === 'last' ? '上次收款单价' : '上家单价'} ${pe.currency === 'USDT' ? pe.price + ' USDT' : '¥' + pe.price} / $1` : '';
-    const toCny = (u) => (!pe.price || u === null || u === undefined ? null : pe.currency === 'USDT' ? (rate ? r2(u * pe.price * rate.rate) : null) : r2(u * pe.price));
-    const cnyAlt = (u) => { const v = toCny(u); return v === null ? null : { text: '≈ ' + cny(v), title: `按${priceTxt}${pe.currency === 'USDT' ? ' × ' + rateTxt : ''} 估算` }; };
+    const estM = (u) => (pe.price ? `≈ ${curFmt(r2(u * pe.price), pe.currency)}${pe.src === 'last' ? '（按上次收款单价）' : ''}` : null);
+    // 对应的人民币 = 额度 × 结算设置里的汇率（¥/$）
+    const rate = Number(set.rate) > 0 ? Number(set.rate) : null;
+    const cnyAlt = (u) => (rate === null || u === null || u === undefined ? null : { text: cny(r2(u * rate)), title: `额度 × 汇率 ¥${rate}/$（结算设置里的汇率）` });
     const y = st.yday;
     const carryTxt = Math.abs(carry) >= 0.00005 ? ` · 含上次结转 ${usd4(carry)}` : '';
     const notes = [];
     if (!p) notes.push(['n-info', 'refresh', '待结算数据正在更新（约半分钟），稍后点“刷新”。']);
     if (p && p.unmatched && p.unmatched.length) notes.push(['n-warn', 'warning', `有 ${p.unmatched.length} 个 Polo 账号没对应到邮箱（${p.unmatched.map((x) => `${x.name} ${usd(x.usd)}`).join('、')}），算在“我的号”里。`]);
     const recvTxt = Object.entries(sd.received).map(([k, v]) => curFmt(v, k)).join(' + ');
-    const recvU = sd.received.USDT || 0, recvCny = recvU && rate ? r2(recvU * rate.rate + (sd.received.CNY || 0)) : null;
     const stats = h('div', { class: 'stats' },
       statCard('未结算收益（上家）', p ? usd(pTot) : '—', 'clock', 'warn', p ? `截至 ${fmtSec(p.end).slice(5, 16)} · 我的号 ${usd(p.mine_usd)} · 成员号 ${usd(p.members_usd)}${carryTxt}${estM(pTot) ? ` · ${estM(pTot)}` : ''}` : '更新中', p ? cnyAlt(pTot) : null),
       statCard(y ? `昨日收益（${y.day.slice(5)}）` : '昨日收益', y ? usd(y.usd) : '—', 'chart', 'blue', y ? `全天 · 我的号 ${usd(y.mine_usd)} · 成员号 ${usd(y.members_usd)}${estM(y.usd) ? ` · ${estM(y.usd)}` : ''} · ${y.status === 'settled' ? '已结算' : y.status === 'partial' ? '部分已结算' : '未结算'}` : '正在计算', y ? cnyAlt(y.usd) : null),
       statCard('已结算（上家）', usd(sd.usd), 'check', 'ok', `${sd.count} 次${Math.abs(sd.polo_usd - sd.usd) >= 0.00005 ? ` · Polo 实际 ${usd4(sd.polo_usd)}` : ''} · 我的号 ${usd(sd.mine_usd)} · 成员号 ${usd(sd.members_usd)} · 累计总额度 ${usd(sd.polo_usd + (p ? p.usd : 0))}`, sd.count ? cnyAlt(sd.usd) : null),
-      statCard('已收款', recvTxt || '—', 'dollar', 'purple', last ? `上次结算点 ${fmtSec(last.end_at).slice(5, 16)}` : '还没有结算点',
-        recvCny !== null ? { text: '≈ ' + cny(recvCny), title: `USDT 按现在的${rateTxt} 折算` } : null));
+      statCard('已收款', recvTxt || '—', 'dollar', 'purple', last ? `上次结算点 ${fmtSec(last.end_at).slice(5, 16)}` : '还没有结算点'));
     // 昨日收益：上家每天结算前一天（「用量统计」按天 00:00:00 – 23:59:59）；点按钮 = 按时间结算到昨天 23:59:59
     const ydBtn = h('button', { class: 'btn btn-primary', type: 'button', disabled: !(y && y.can_settle && y.status !== 'settled'),
       onclick: () => upstreamAddModal(st, info, reload, { time: y.settle_to, title: `结算昨日收益（${y.day}）` }) }, icon('check', 'icon icon-sm'), '结算昨日收益');
@@ -2818,8 +2814,9 @@
     const ydCard = h('div', { class: 'card yd-card', style: { marginBottom: '16px' } }, h('div', { class: 'card-body yd-row' },
       h('div', { class: 'yd-main' },
         h('div', { class: 'yd-title' }, icon('chart', 'icon icon-sm'), y ? `昨日收益 · ${y.day}` : '昨日收益', h('span', { class: 'faint xs', text: '北京时间 00:00:00 – 23:59:59，按「用量统计」按天，和上家网页的数一致' })),
-        h('div', { class: 'yd-amt' }, h('b', { text: y ? usd4(y.usd) : '—' }), y && estM(y.usd) ? h('span', { text: estM(y.usd) }) : null,
+        h('div', { class: 'yd-amt' }, h('b', { text: y ? usd4(y.usd) : '—' }),
           y && cnyAlt(y.usd) ? h('span', { class: 'yd-cny', title: cnyAlt(y.usd).title, text: cnyAlt(y.usd).text }) : null,
+          y && estM(y.usd) ? h('span', { text: estM(y.usd) }) : null,
           y ? h('span', { class: 'chip ' + (y.status === 'settled' ? 'chip-ok' : 'chip-warn'), text: y.status === 'settled' ? '已结算' : y.status === 'partial' ? '部分已结算' : '未结算' }) : null),
         h('div', { class: 'faint xs', text: ydNote })),
       h('div', { class: 'toolbar' }, ydBtn)));
