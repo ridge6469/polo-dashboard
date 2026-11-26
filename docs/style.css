@@ -529,6 +529,17 @@ td.money-strong, b.money-strong { color: var(--primary-text); }
 .sum-chips > div { display: flex; flex-direction: column; gap: 2px; padding: 10px 14px; border-radius: 12px; background: var(--surface-2); min-width: 120px; }
 .sum-chips small { font-size: 11.5px; color: var(--muted); }
 .sum-chips b { font-size: 17px; font-variant-numeric: tabular-nums; }
+.line-picks { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 2px 0 8px; }
+.line-picks .lp-label { font-size: 11.5px; color: var(--muted); margin-right: 2px; }
+.lp { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); color: var(--faint); font-size: 12px; cursor: pointer; font-variant-numeric: tabular-nums; }
+.lp.on { color: var(--text); background: var(--surface-2); border-color: var(--border-strong, var(--border)); }
+.lp:not(.on) .lp-sw { opacity: .35; }
+.lp:hover { border-color: var(--primary, #6366f1); }
+.lp-sw { display: inline-block; flex: none; width: 18px; height: 0; border-top: 3px solid; }
+.lp-sw.dashed { border-top-style: dashed; }
+.lp-sw.dotted { border-top-style: dotted; }
+.lp-act { color: var(--muted); border-style: dashed; }
+@media (max-width: 760px) { .lp { padding: 5px 10px; min-height: 30px; } }
 .cmp-chips { margin: 0 0 10px; }
 .cmp-chips b { display: inline-flex; align-items: center; gap: 2px; flex-wrap: wrap; }
 .cmp-chips > div > span.faint { line-height: 1.35; }

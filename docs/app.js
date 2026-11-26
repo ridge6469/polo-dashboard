@@ -275,8 +275,17 @@
   }
   function saveSession(token, user, ttl, remember) {
     clearSession();
-    S.token = token; S.user = user; S.store = remember ? localStorage : sessionStorage;
-    S.store.setItem(SESSION_KEY, JSON.stringify({ token, user, exp: Date.now() + (ttl - 60) * 1000 }));
+    S.token = token; S.user = user; S.store = remember ? localStorage : sessionStorage; S.touched = Date.now();
+    S.store.setItem(SESSION_KEY, JSON.stringify({ token, user, ttl, exp: Date.now() + (ttl - 60) * 1000 }));
+  }
+  // 服务器上的会话用着就续期（每小时最多一次，延到「现在 + 会话时长」）；本地记的到期时间也跟着往后挪，留一小时余量
+  function touchSession() {
+    if (!S.store || !S.token || Date.now() - (S.touched || 0) < 600000) return;
+    S.touched = Date.now();
+    try {
+      const s = JSON.parse(S.store.getItem(SESSION_KEY));
+      if (s && s.token === S.token && s.ttl) { s.exp = Date.now() + (s.ttl - 3660) * 1000; S.store.setItem(SESSION_KEY, JSON.stringify(s)); }
+    } catch { /* ignore */ }
   }
   function persistUser() {
     if (!S.store) return;
@@ -329,6 +338,7 @@
       }
       throw err;
     }
+    if (S.token) touchSession();
     return data;
   }
 
@@ -430,12 +440,12 @@
   function pageLogin(message) {
     const u = leadInput('user', { autocomplete: 'username', placeholder: '用户名', required: true, value: S.prefillUser || '' });
     const p = passwordInput({ autocomplete: 'current-password', placeholder: '密码', required: true });
-    const remember = h('input', { type: 'checkbox' });
+    const remember = h('input', { type: 'checkbox', checked: localStorage.getItem('polo_remember') !== '0' });
     const err = h('div', { class: 'form-error', role: 'alert', text: message || '' });
     const btn = h('button', { class: 'btn btn-primary btn-block', type: 'submit' }, '登录');
     const form = h('form', { novalidate: true },
       field('用户名', u.wrap), field('密码', p.wrap),
-      h('label', { class: 'check', style: { marginBottom: '6px' } }, remember, '保持登录（关闭浏览器后仍有效）'),
+      h('label', { class: 'check', style: { marginBottom: '6px' } }, remember, '保持登录（30 天内用过就不用重新登录）'),
       err, btn);
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -443,7 +453,8 @@
       if (!u.input.value.trim() || !p.input.value) { err.textContent = '请输入用户名和密码'; return; }
       btn.disabled = true; clear(btn, icon('refresh', 'icon icon-sm spin'), '登录中…');
       try {
-        const r = await api('POST', '/auth/login', { username: u.input.value.trim(), password: p.input.value });
+        const r = await api('POST', '/auth/login', { username: u.input.value.trim(), password: p.input.value, remember: remember.checked });
+        localStorage.setItem('polo_remember', remember.checked ? '1' : '0');
         saveSession(r.token, r.user, r.expires_in, remember.checked);
         S.prefillUser = '';
         toast(`欢迎回来，${r.user.username}`, 'ok');
@@ -1221,6 +1232,28 @@
     return { el: btn, reset: () => { left = typeof sec === 'number' ? sec : 0; paint(); }, sync: () => sec === 'sync' };
   }
 
+  // 图上显示哪些线：一排可点的标签（代替图例）。items: [{ key, label, color, dash: 'dashed' | 'dotted', def }]，选择按 key 记在 localStorage
+  // 前几天逐日的线：避开今天（蓝）、峰值（紫）、昨天（橙）、平均（绿）的颜色
+  const DAY_COLORS = ['#ef4444', '#06b6d4', '#ec4899', '#84cc16', '#64748b', '#a855f7', '#0ea5e9'];
+  function linePicker(storeKey, items, onChange) {
+    let saved = {};
+    try { saved = JSON.parse(localStorage.getItem(storeKey) || '{}') || {}; } catch { saved = {}; }
+    const on = new Set(items.filter((x) => (Object.prototype.hasOwnProperty.call(saved, x.key) ? saved[x.key] : x.def)).map((x) => x.key));
+    const save = () => { const o = Object.assign({}, saved); for (const x of items) o[x.key] = on.has(x.key); saved = o; localStorage.setItem(storeKey, JSON.stringify(o)); };
+    const btns = items.map((x) => {
+      const b = h('button', { type: 'button', class: 'lp', title: '点一下显示 / 隐藏' }, h('i', { class: 'lp-sw' + (x.dash ? ' ' + x.dash : ''), style: { borderTopColor: x.color } }), x.label);
+      b.addEventListener('click', () => { if (on.has(x.key)) on.delete(x.key); else on.add(x.key); paint(); save(); onChange(); });
+      return [x, b];
+    });
+    const bulk = (keys) => { on.clear(); keys.forEach((k) => on.add(k)); paint(); save(); onChange(); };
+    const all = h('button', { type: 'button', class: 'lp lp-act', onclick: () => bulk(items.map((x) => x.key)) }, '全部');
+    const def = h('button', { type: 'button', class: 'lp lp-act', onclick: () => bulk(items.filter((x) => x.def).map((x) => x.key)) }, '默认');
+    const paint = () => { for (const [x, b] of btns) { b.classList.toggle('on', on.has(x.key)); b.setAttribute('aria-pressed', String(on.has(x.key))); } };
+    paint();
+    const el = h('div', { class: 'line-picks', role: 'group', 'aria-label': '显示哪些线' }, h('span', { class: 'lp-label', text: '显示' }), btns.map(([, b]) => b), all, def);
+    return { el, isOn: (k) => on.has(k) };
+  }
+
   function pagePoolTrend() {
     const { main } = appLayout({ active: '#/pool-trend', title: '总池并发走势', desc: '整个号池同时在处理多少个请求 · 北京时间' });
     let choice = 'today', seq = 0, data = null, chart = null, grain = Number(localStorage.getItem('polo_pool_grain')) || 6;
@@ -1231,12 +1264,13 @@
     const dateInput = h('input', { class: 'input input-sm', type: 'date', 'aria-label': '查看日期（北京时间）', style: { width: 'auto' } });
     const today = h('button', { class: 'btn btn-secondary btn-sm', type: 'button', onclick: () => select('today') }, '今天');
     const note = h('p', { class: 'hint', role: 'status' });
+    const picks = h('div');
     const stats = h('div', { class: 'stats' }), plot = h('div', { style: { height: '320px', width: '100%' }, 'aria-label': '全天每五分钟的平均在飞和峰值，以及前几天同一时段的对照' });
     const days = h('tbody'), dhead = h('thead');
     append(main, h('div', { class: 'card' }, h('div', { class: 'card-head' },
       h('h2', { class: 'card-title' }, icon('activity'), '每日并发'), h('div', { class: 'toolbar' }, grainSeg, today, dateInput)),
-      h('div', { class: 'card-body' }, stats, note, plot,
-        h('p', { class: 'hint', text: '来自 Polo 的「总池实时并发」，约每 15 秒采样一次。每 5 分钟显示样本平均和最高在飞数；没有读数的时段留空，不算作 0。虚线是前一天、点线是前几天的平均（同一时段的 5 分钟平均）；点图例可以打开前几天逐日的线；右上角可以换成每 30 分钟、每小时一个点，更好对比。' }))),
+      h('div', { class: 'card-body' }, stats, note, picks, plot,
+        h('p', { class: 'hint', text: '来自 Polo 的「总池实时并发」，约每 15 秒采样一次。每 5 分钟显示样本平均和最高在飞数；没有读数的时段留空，不算作 0。虚线是前一天、点线是前几天的平均（同一时段的 5 分钟平均）；图上方「显示」那一排可以选显示哪些线（含前几天逐日的线），会记住；右上角可以换成每 30 分钟、每小时一个点，更好对比。' }))),
       h('div', { class: 'card', style: { marginTop: '16px' } }, h('div', { class: 'card-head' }, h('h2', { class: 'card-title' }, icon('log'), '近七天对照')),
         h('div', { class: 'table-wrap' }, h('table', { class: 'mini-table' }, dhead, days))));
     const num = (v) => v == null ? '—' : v.toLocaleString('zh-CN');
@@ -1266,17 +1300,28 @@
       const C0 = cmpOf(d), cm = C0.cm.map((x) => ({ ...x, avg: merge(x.avg) })), yd = C0.yd ? cm[C0.cm.indexOf(C0.yd)] : null, ydName = C0.ydName;
       const avgN = cm.length ? merge(Array.from({ length: 288 }, (_, i) => C0.avgAt(i))) : null, avgName = `近 ${cm.length} 天平均`;
       const older = cm.filter((x) => x !== yd), olderName = (x) => x.day.slice(5);
+      const isToday = d.day === d.today, back = (day) => Math.round((Date.parse(d.day) - Date.parse(day)) / 86400000);
+      const items = [
+        { key: 'avg', name: '平均并发', label: isToday ? '今天平均' : `${d.day.slice(5)} 平均`, color: PALETTE[0], def: true },
+        { key: 'peak', name: '采样峰值', label: isToday ? '今天峰值' : `${d.day.slice(5)} 峰值`, color: PALETTE[1], def: true },
+        yd ? { key: 'yd', name: ydName, label: ydName, color: '#f59e0b', dash: 'dashed', def: true } : null,
+        avgN ? { key: 'avgN', name: avgName, label: avgName, color: '#10b981', dash: 'dotted', def: true } : null,
+        ...older.map((x, k) => ({ key: 'd' + back(x.day), name: olderName(x), label: olderName(x), color: DAY_COLORS[k % DAY_COLORS.length], def: false })),
+      ].filter(Boolean);
+      const pk = linePicker('polo_pool_lines', items, () => draw());
+      clear(picks, pk.el);
       const tr = (k, v) => `<div class="ct-row"><span>${k}</span><b>${v}</b></div>`;
       const diff = (a, c) => { const p = pctOf(a, c); return p ? ` <span class="${a >= c ? 'text-ok' : 'text-bad'}">${p}</span>` : ''; };
-      chart.setOption({ ...b, animation: false, legend: { ...b.legend, selected: Object.fromEntries(older.map((x) => [olderName(x), false])) },
-        grid: { left: 8, right: 14, top: 40, bottom: 6, containLabel: true },
+      chart.setOption({ ...b, animation: false, legend: { show: false, selected: Object.fromEntries(items.map((x) => [x.name, pk.isOn(x.key)])) },
+        grid: { left: 8, right: 14, top: 16, bottom: 6, containLabel: true },
         tooltip: { ...b.tooltip, axisPointer: { type: 'line', lineStyle: { color: theme.border } }, formatter: (ps) => {
           const i = ps[0] ? ps[0].dataIndex : null; if (i === null) return '';
           const row = bins[i];
           let out = `<div class="ct-title">${hhmm(d.start + i * step)} – ${hhmm(d.start + (i + 1) * step)}${G > 1 ? '（这段的平均）' : ''}</div>`;
-          out += row ? tr(d.day === d.today ? '今天 平均 / 峰值' : `${d.day.slice(5)} 平均 / 峰值`, `${num(row.avg)} / ${num(row.peak)}`) : tr(d.day === d.today ? '今天' : d.day.slice(5), '没有采样');
-          if (yd) out += tr(ydName, num(yd.avg[i]) + (row ? diff(row.avg, yd.avg[i]) : ''));
-          if (avgN) out += tr(avgName, num(avgN[i]) + (row ? diff(row.avg, avgN[i]) : ''));
+          const nm = isToday ? '今天' : d.day.slice(5);
+          if (pk.isOn('avg') || pk.isOn('peak')) out += row ? tr(`${nm} ${[pk.isOn('avg') && '平均', pk.isOn('peak') && '峰值'].filter(Boolean).join(' / ')}`, [pk.isOn('avg') && num(row.avg), pk.isOn('peak') && num(row.peak)].filter(Boolean).join(' / ')) : tr(nm, '没有采样');
+          if (yd && pk.isOn('yd')) out += tr(ydName, num(yd.avg[i]) + (row ? diff(row.avg, yd.avg[i]) : ''));
+          if (avgN && pk.isOn('avgN')) out += tr(avgName, num(avgN[i]) + (row ? diff(row.avg, avgN[i]) : ''));
           for (const p of ps) if (older.some((x) => olderName(x) === p.seriesName)) out += tr(p.seriesName, num(p.value));
           return out;
         } },
@@ -1286,11 +1331,11 @@
           { name: '采样峰值', type: 'line', showSymbol: true, symbolSize: 2, connectNulls: false, data: bins.map((r) => (r ? r.peak : null)), lineStyle: { width: 1, opacity: 0.55, color: PALETTE[1] }, itemStyle: { color: PALETTE[1] }, z: 4 },
           yd ? { name: ydName, type: 'line', showSymbol: false, connectNulls: false, data: yd.avg, lineStyle: { width: 2, type: 'dashed', color: '#f59e0b' }, itemStyle: { color: '#f59e0b' }, z: 3 } : null,
           avgN ? { name: avgName, type: 'line', showSymbol: false, connectNulls: false, data: avgN, lineStyle: { width: 2, type: 'dotted', color: '#10b981' }, itemStyle: { color: '#10b981' }, z: 3 } : null,
-          ...older.map((x, k) => ({ name: olderName(x), type: 'line', showSymbol: false, connectNulls: false, data: x.avg, lineStyle: { width: 1.2, opacity: 0.75, color: PALETTE[(k + 4) % PALETTE.length] }, itemStyle: { color: PALETTE[(k + 4) % PALETTE.length] }, z: 2 })),
+          ...older.map((x, k) => ({ name: olderName(x), type: 'line', showSymbol: false, connectNulls: false, data: x.avg, lineStyle: { width: 1.4, opacity: 0.85, color: DAY_COLORS[k % DAY_COLORS.length] }, itemStyle: { color: DAY_COLORS[k % DAY_COLORS.length] }, z: 2 })),
         ].filter(Boolean) }, true);
     }
     function select(day) {
-      choice = day; data = null; plot.hidden = true; clear(stats); clear(days); load();
+      choice = day; data = null; plot.hidden = true; clear(stats); clear(days); clear(picks); load();
     }
     async function load() {
       const id = ++seq, valid = () => id === seq && main.isConnected;
@@ -3815,21 +3860,31 @@
         const older = others.filter((o) => o.day !== (ID.days[1] || {}).day);
         const pct = (a, b) => (b > 0 && a !== null && a !== undefined ? ` <span class="${a >= b ? 'text-ok' : 'text-bad'}">${a >= b ? '↑' : '↓'}${Math.abs(((a - b) / b) * 100).toFixed(1)}%</span>` : '');
         const tipRows = (i) => {
-          const r = refV[i], rows = [[refN, r, '']];
-          if (ydV) rows.push([ydName, ydV[i], r !== null ? pct(r, ydV[i]) : '']);
-          if (avgV) rows.push([avgName, avgV[i], r !== null ? pct(r, avgV[i]) : '']);
+          const r = refV[i], rows = [];
+          if (pk.isOn('ref')) rows.push([refN, r, '']);
+          if (ydV && pk.isOn('yd')) rows.push([ydName, ydV[i], r !== null ? pct(r, ydV[i]) : '']);
+          if (avgV && pk.isOn('avg')) rows.push([avgName, avgV[i], r !== null ? pct(r, avgV[i]) : '']);
           return rows;
         };
-        const sel = Object.fromEntries(older.map((o) => [o.day.slice(5), false]));
+        const back = (day) => Math.round((Date.parse(ID.ref) - Date.parse(day)) / 86400000);
+        const items = [
+          { key: 'ref', name: refN, label: refN, color: '#3b82f6', def: true },
+          ydV ? { key: 'yd', name: ydName, label: ydName, color: '#f59e0b', dash: 'dashed', def: true } : null,
+          avgV ? { key: 'avg', name: avgName, label: avgName, color: '#10b981', dash: 'dotted', def: true } : null,
+          ...older.map((o, i) => ({ key: 'd' + back(o.day), name: o.day.slice(5), label: o.day.slice(5), color: DAY_COLORS[i % DAY_COLORS.length], def: false })),
+        ].filter(Boolean);
+        const selOf = () => Object.fromEntries(items.map((x) => [x.name, pk.isOn(x.key)]));
+        const pk = linePicker('polo_cmp_lines', items, () => ch0.setOption({ legend: { selected: selOf() } }));
+        cmp.el.before(pk.el);
         ch0.setOption(Object.assign(baseOpt(t), {
-          legend: Object.assign(baseOpt(t).legend, { selected: sel }),
+          legend: { show: false, selected: selOf() },
           tooltip: Object.assign(baseOpt(t).tooltip, { axisPointer: { type: hrMode ? 'shadow' : 'line', lineStyle: { color: t.border } }, formatter: (ps) => {
             const i = ps[0] ? ps[0].dataIndex : null; if (i === null) return '';
             const head = hrMode ? `${labels[i]} – ${String(i + 1).padStart(2, '0')}:00${hrMode ? '（这一小时）' : ''}` : `00:00 → ${labels[i]}（累计）`;
             const extra = ps.filter((p) => older.some((o) => o.day.slice(5) === p.seriesName)).map((p) => [p.seriesName, p.value, '']);
             return `<div class="ct-title">${head}</div>` + [...tipRows(i), ...extra].map(([k, v, d]) => `<div class="ct-row"><span>${escHtml(k)}</span><b>${v === null || v === undefined ? '—' : cny(v)}${d}</b></div>`).join('');
           } }),
-          grid: { left: 8, right: 14, top: 40, bottom: 6, containLabel: true },
+          grid: { left: 8, right: 14, top: 26, bottom: 6, containLabel: true },
           xAxis: axisX(t, labels, hrMode ? {} : { boundaryGap: false, axisLabel: { color: t.muted, fontSize: 11, interval: 17 } }),
           yAxis: axisY(t, shortCny),
           series: [
@@ -3838,7 +3893,7 @@
                 markLine: ID.asof ? { symbol: 'none', silent: true, label: { formatter: '到 ' + atLbl, color: t.muted, fontSize: 11 }, lineStyle: { color: t.muted, type: 'dashed' }, data: [{ xAxis: Math.max(0, cut - 1) }] } : undefined },
             ydV ? { name: ydName, type: 'line', data: ydV, showSymbol: false, smooth: hrMode ? 0.3 : false, lineStyle: { width: 2, type: 'dashed', color: '#f59e0b' }, itemStyle: { color: '#f59e0b' }, z: 3 } : null,
             avgV ? { name: avgName, type: 'line', data: avgV, showSymbol: false, smooth: hrMode ? 0.3 : false, lineStyle: { width: 2, type: 'dotted', color: '#10b981' }, itemStyle: { color: '#10b981' }, z: 3 } : null,
-            ...older.map((o, i) => ({ name: o.day.slice(5), type: 'line', data: o.v, showSymbol: false, smooth: hrMode ? 0.3 : false, lineStyle: { width: 1.2, opacity: 0.7, color: PALETTE[(i + 4) % PALETTE.length] }, itemStyle: { color: PALETTE[(i + 4) % PALETTE.length] }, z: 2 })),
+            ...older.map((o, i) => ({ name: o.day.slice(5), type: 'line', data: o.v, showSymbol: false, smooth: hrMode ? 0.3 : false, lineStyle: { width: 1.4, opacity: 0.85, color: DAY_COLORS[i % DAY_COLORS.length] }, itemStyle: { color: DAY_COLORS[i % DAY_COLORS.length] }, z: 2 })),
           ].filter(Boolean),
         }));
       }
