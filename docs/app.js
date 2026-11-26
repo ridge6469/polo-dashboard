@@ -85,7 +85,7 @@
     s.setAttribute('viewBox', '0 0 24 24');
     s.setAttribute('fill', 'none');
     s.setAttribute('stroke', 'currentColor');
-    s.setAttribute('stroke-width', name === 'more' ? '3' : '1.5');
+    s.setAttribute('stroke-width', name === 'more' ? '3' : '1.8');
     s.setAttribute('stroke-linecap', 'round');
     s.setAttribute('stroke-linejoin', 'round');
     s.setAttribute('class', cls);
@@ -212,7 +212,7 @@
       m.append(h('button', {
         class: 'menu-item' + (it.danger ? ' danger' : ''), type: 'button', disabled: !!it.disabled, title: it.title || null,
         onclick: () => { close(); it.onClick && it.onClick(); },
-      }, it.icon ? icon(it.icon, 'icon icon-sm') : it.dot ? h('i', { class: 'menu-dot ' + it.dot }) : null, h('span', { text: it.label }), it.checked ? icon('check', 'icon icon-sm tick') : null));
+      }, it.icon ? icon(it.icon, 'icon icon-sm') : null, h('span', { text: it.label }), it.checked ? icon('check', 'icon icon-sm tick') : null));
     }
     document.body.append(m);
     const r = anchor.getBoundingClientRect();
@@ -243,29 +243,20 @@
   // ============================================================
   const media = window.matchMedia('(prefers-color-scheme: dark)');
   const getTheme = () => localStorage.getItem('polo_theme') || 'system';
-  // 强调色：只用在主要操作、选中项、链接和图表里最要紧的那条线上；记在这台设备上
-  const ACCENTS = [['cobalt', '钴蓝'], ['amber', '琥珀'], ['teal', '青绿']];
-  const getAccent = () => { const a = localStorage.getItem('polo_accent'); return ACCENTS.some(([k]) => k === a) ? a : 'cobalt'; };
   function applyTheme() {
-    const t = getTheme(), root = document.documentElement;
-    root.classList.toggle('dark', t === 'dark' || (t === 'system' && media.matches));
-    root.dataset.accent = getAccent();
-    const meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) meta.setAttribute('content', root.classList.contains('dark') ? '#141415' : '#fafafa');
+    const t = getTheme();
+    document.documentElement.classList.toggle('dark', t === 'dark' || (t === 'system' && media.matches));
   }
   media.addEventListener('change', applyTheme);
   function setTheme(t) { localStorage.setItem('polo_theme', t); applyTheme(); }
-  function setAccent(a) { localStorage.setItem('polo_accent', a); applyTheme(); }
   function themeButton() {
-    const btn = h('button', { class: 'btn btn-ghost btn-icon', type: 'button', title: '外观：浅色 / 深色、强调色', 'aria-label': '外观' });
+    const btn = h('button', { class: 'btn btn-ghost btn-icon', type: 'button', title: '切换主题', 'aria-label': '切换主题' });
     const paint = () => clear(btn, icon(document.documentElement.classList.contains('dark') ? 'moon' : 'sun'));
     paint();
     btn.addEventListener('click', () => menu(btn, [
       { label: '浅色', icon: 'sun', checked: getTheme() === 'light', onClick: () => { setTheme('light'); paint(); } },
       { label: '深色', icon: 'moon', checked: getTheme() === 'dark', onClick: () => { setTheme('dark'); paint(); } },
       { label: '跟随系统', icon: 'monitor', checked: getTheme() === 'system', onClick: () => { setTheme('system'); paint(); } },
-      '-',
-      ...ACCENTS.map(([k, label]) => ({ label: '强调色 · ' + label, dot: 'ap-' + k, checked: getAccent() === k, onClick: () => setAccent(k) })),
     ]));
     return btn;
   }
@@ -434,13 +425,15 @@
   // ============================================================
   function mountAuth(card, foot) {
     const root = h('div', { class: 'auth' },
+      h('div', { class: 'bg' }, h('div', { class: 'orb orb-1' }), h('div', { class: 'orb orb-2' }), h('div', { class: 'orb orb-3' })),
       h('div', { class: 'auth-top' }, themeButton()),
       h('div', { class: 'auth-box' },
         h('div', { class: 'brand-hero' },
           h('div', { class: 'logo-tile' }, icon('bolt')),
-          h('div', {}, h('h1', { text: 'Polo 用量看板' }), h('p', { text: 'Claude 账号池的额度、并发和结算' }))),
+          h('h1', { class: 'gradient-text', text: 'Polo 用量看板' }),
+          h('p', { text: 'Claude 账号池额度、用量与重置时间一览' })),
         card, foot,
-        h('div', { class: 'auth-copy', text: `© ${new Date().getFullYear()} Polo 看板` })));
+        h('div', { class: 'auth-copy', text: `© ${new Date().getFullYear()} Polo Dashboard` })));
     clear(document.getElementById('root'), root);
   }
 
@@ -452,7 +445,7 @@
     const btn = h('button', { class: 'btn btn-primary btn-block', type: 'submit' }, '登录');
     const form = h('form', { novalidate: true },
       field('用户名', u.wrap), field('密码', p.wrap),
-      h('label', { class: 'check', style: { marginBottom: '8px' } }, remember, '保持登录（30 天内用过就不用重新登录）'),
+      h('label', { class: 'check', style: { marginBottom: '6px' } }, remember, '保持登录（30 天内用过就不用重新登录）'),
       err, btn);
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -472,7 +465,7 @@
       }
     });
     mountAuth(
-      h('div', { class: 'card auth-card' }, h('h2', { text: '登录' }), h('p', { class: 'sub', text: '查看分给你的账号额度、用量和收益' }), form),
+      h('div', { class: 'card auth-card' }, h('h2', { text: '欢迎回来' }), h('p', { class: 'sub', text: '登录后查看你可以访问的账号额度与用量' }), form),
       h('div', { class: 'auth-foot' }, '有邀请码？', h('a', { href: '#/register' }, '立即注册')));
     (u.input.value ? p.input : u.input).focus();
   }
@@ -548,7 +541,7 @@
       h('div', { class: 'side-section', text: '账户' }),
       link('#/settings', 'cog', '个人设置'));
     const sidebar = h('aside', { class: 'sidebar' },
-      h('div', { class: 'side-brand' }, h('div', { class: 'logo' }, icon('bolt')), h('div', {}, h('b', { text: 'Polo 看板' }), h('small', { text: '账号额度与用量' }))),
+      h('div', { class: 'side-brand' }, h('div', { class: 'logo' }, icon('bolt')), h('div', {}, h('b', { class: 'gradient-text', text: 'Polo 看板' }), h('small', { text: '账号额度与用量' }))),
       nav,
       h('div', { class: 'side-foot', text: '完整数据约每 3 分钟采集一次，实时数字每 15 秒' }));
     const backdrop = h('div', { class: 'backdrop', hidden: true, onclick: () => toggleSide(false) });
@@ -580,7 +573,7 @@
           h('div', { style: { minWidth: 0 } }, h('h1', { text: title }), desc ? h('p', { text: desc }) : null)),
         h('div', { class: 'row' }, themeButton(), userChip)),
       main);
-    clear(document.getElementById('root'), h('div', { class: 'app' + (bottomNav ? ' has-bn' : '') }, sidebar, backdrop, shell, bottomNav));
+    clear(document.getElementById('root'), h('div', { class: 'app' + (bottomNav ? ' has-bn' : '') }, h('div', { class: 'bg' }), sidebar, backdrop, shell, bottomNav));
 
     if (isAdmin() && !locked) refreshPending([pendingBadge, bnBadge]);
     return { main };
@@ -627,12 +620,13 @@
   }
   // Polo 页面上的金额不带千分位（$2877.72）：和其他页面统一成 $2,877.72
   const groupMoney = (v) => (typeof v === 'string' && /^[$¥]\d{4,}(\.\d+)?$/.test(v) ? v[0] + Number(v.slice(1)).toLocaleString('en-US', { minimumFractionDigits: (v.split('.')[1] || '').length, maximumFractionDigits: (v.split('.')[1] || '').length }) : v);
-  function statCard(label, value, iconName, tone = 'blue', sub) {  // iconName / tone 不再用（卡片只放数字），留着参数位置
+  function statCard(label, value, iconName, tone = 'blue', sub) {
     const shown = dash(groupMoney(value));
     return h('div', { class: 'card stat' },
-      h('div', { style: { minWidth: 0 } }, h('div', { class: 'stat-label', text: label }), h('div', { class: 'stat-value', text: shown, title: shown }), sub ? h('div', { class: 'stat-sub', text: sub, title: sub }) : null));
+      h('div', { class: 'stat-icon si-' + tone }, icon(iconName)),
+      h('div', { style: { minWidth: 0 } }, h('div', { class: 'stat-label', text: label }), h('div', { class: 'stat-value', text: shown, title: shown }), sub ? h('div', { class: 'stat-sub', text: sub }) : null));
   }
-  const skeletonStats = (n) => Array.from({ length: n }, () => h('div', { class: 'card stat' }, h('div', { class: 'grow' }, h('div', { class: 'skeleton sk-line', style: { width: '50%' } }), h('div', { class: 'skeleton sk-line', style: { width: '70%', height: '20px' } }))));
+  const skeletonStats = (n) => Array.from({ length: n }, () => h('div', { class: 'card stat' }, h('div', { class: 'stat-icon skeleton' }), h('div', { class: 'grow' }, h('div', { class: 'skeleton sk-line', style: { width: '50%' } }), h('div', { class: 'skeleton sk-line', style: { width: '70%', height: '20px' } }))));
   const emptyState = (text, iconName = 'inbox') => h('div', { class: 'empty' }, icon(iconName), h('div', { text }));
 
   // ============================================================
@@ -750,7 +744,7 @@
     return h('div', {},
       h('span', { class: 'mono ip', title: '点击复制' + (px.host && px.host !== ip ? `\n主机名：${px.host}` : ''), onclick: () => copy(ip, ' IP') }, ip),
       h('div', { class: 'cell-sub mono', text: `${px.protocol || '代理'} · 端口 ${dash(px.port)}` }),
-      h('div', { class: 'chips', style: { marginTop: '4px' } },
+      h('div', { class: 'chips', style: { marginTop: '5px' } },
         px.health ? h('span', { class: 'badge ' + tone, text: px.health + (lat !== null && lat !== undefined ? ` ${lat}ms` : '') }) : null,
         px.host && px.host !== ip ? h('span', { class: 'chip', title: px.host, text: '域名解析' }) : null,
         others.length ? h('span', { class: 'chip chip-warn', title: '这些账号使用同一个出口 IP', text: '与 ' + others.join('、') + ' 共用' }) : null));
@@ -951,7 +945,7 @@
           h('span', { class: 'tag-claude', text: 'Claude' }),
           r.email ? h('span', { class: 'l-email', title: r.email + '（点击复制）', onclick: () => copy(r.email, '邮箱') }, r.email) : h('span', { class: 'l-email', text: dash(r.display_name) }),
           h('span', { class: 'switch' + (on ? ' on' : ''), title: `后台状态：${r.state || '未知'}（只读）` }, h('i'))),
-        h('div', { class: 'l-line', style: { marginTop: '8px' } },
+        h('div', { class: 'l-line', style: { marginTop: '6px' } },
           seatBadge(r, admin), fableHint(r), ownerChip(r, admin),
           h('span', { class: 'l-name mono', title: '后台显示名', text: dash(r.display_name) }), concPill(r, 'mob')),
         h('div', { class: 'l-sub' }, meta || '—'),
@@ -967,14 +961,14 @@
             h('span', { text: `会话 ${dash(rt.sessions)}` }),
             slots !== undefined && slots !== null ? h('span', { class: 'faint', text: `· 已绑定会话 ${slots}` }) : null)),
         healthBar(r),
-        h('div', { class: 'l-line', style: { marginTop: '8px' } }, ipMini(r, shared || {}))),
+        h('div', { class: 'l-line', style: { marginTop: '6px' } }, ipMini(r, shared || {}))),
       // 请求
       h('td', { 'data-label': '请求' },
         h('div', { class: 'req' },
           h('span', { class: 'req-k', text: '今日' }), h('span', {}, h('b', { class: 'mono', text: compact(t.requests) }), h('span', { class: 'faint xs', text: ' req' })),
-          h('span', { class: 'req-k', text: '近7天' }), h('span', {}, h('span', { class: 'pill p-mute', title: '最近 7 天请求数', text: compact(hs['7d'] && hs['7d'].requests) })),
+          h('span', { class: 'req-k', text: '近7天' }), h('span', {}, h('span', { class: 'pill p-ok', title: '最近 7 天请求数', text: compact(hs['7d'] && hs['7d'].requests) })),
           h('span', { class: 'req-k', text: '24H' }), h('span', {},
-            h('span', { class: 'pill p-mute', title: '24 小时请求数', text: dash(hl.requests_24h) }),
+            h('span', { class: 'pill p-ok', title: '24 小时请求数', text: dash(hl.requests_24h) }),
             h('span', { class: 'pill ' + ((toNum(hl.rate_limits_24h) || 0) > 0 ? 'p-bad' : 'p-mute'), title: '24 小时限流次数', text: dash(hl.rate_limits_24h) })),
           h('span', { class: 'req-k', text: 'RPM' }), h('span', { class: 'mono small', title: `TPM ${dash(ln.tpm)}${ln.live ? '（每 15 秒更新）' : ''}`, text: `${dash(ln.rpm)} · TPM ${compact(ln.tpm)}` }))),
       // 额度
@@ -1054,8 +1048,8 @@
   // （以前这里显示的是 Polo 的“分组”，全是 default，和归属无关）
   function ownerChip(r, admin) {
     if (!admin) return null;
-    if (r.owner) return h('span', { class: 'chip chip-owner', title: `归属：成员 ${r.owner.name}（在“结算 → 归属与设置”里改）`, text: r.owner.name });
-    return h('span', { class: 'chip', title: '归属：我的号（没有归属给成员）', text: '我' });
+    if (r.owner) return h('span', { class: 'chip chip-blue', title: `归属：成员 ${r.owner.name}（在“结算 → 归属与设置”里改）`, text: r.owner.name });
+    return h('span', { class: 'chip chip-orange', title: '归属：我的号（没有归属给成员）', text: '我' });
   }
   const ownerText = (r) => (r.owner ? r.owner.name : '我');
   function seatBadge(r, admin) {
@@ -1177,7 +1171,7 @@
           h('div', { title: d.last_used_at ? '最近使用：' + fmtTime(d.last_used_at) : '' }, lastUsed ? `${lastUsed}使用` : '—'),
           d.usage_updated_at ? h('div', { class: old ? 'text-warn' : '', title: '后台最近一次刷新该账号用量：' + fmtTime(d.usage_updated_at) }, `用量 ${ago(d.usage_updated_at)}更新`) : null)),
       tags.length ? h('div', { class: 'chips' }, tags) : null,
-      (r.cool || d.cooldown_text) ? h('div', { class: 'notice n-warn', style: { margin: 0, padding: '6px 8px', alignItems: 'center' }, title: r.cool ? coolTitle(r.cool) : null }, icon('clock', 'icon icon-sm'), h('span', { style: { flex: '1' }, text: r.cool ? coolText(r.cool) : d.cooldown_text }),
+      (r.cool || d.cooldown_text) ? h('div', { class: 'notice n-warn', style: { margin: 0, padding: '6px 10px', alignItems: 'center' }, title: r.cool ? coolTitle(r.cool) : null }, icon('clock', 'icon icon-sm'), h('span', { style: { flex: '1' }, text: r.cool ? coolText(r.cool) : d.cooldown_text }),
         isAdmin() && r.email ? h('button', { class: 'btn btn-secondary btn-xs', type: 'button', title: '刷新用量；官方用量没满就清空本地冷却、清除错误', onclick: (e) => { e.stopPropagation(); recoverAccount(r); } }, '恢复') : null) : null,
       h('div', { class: 'ac-sec' }, usageBlock(r, false)),
       h('div', { class: 'ac-sec' }, h('table', { class: 'mini' },
@@ -1272,8 +1266,7 @@
     paintGrain();
     const dateInput = h('input', { class: 'input input-sm', type: 'date', 'aria-label': '查看日期（北京时间）', style: { width: 'auto' } });
     const today = h('button', { class: 'btn btn-secondary btn-sm', type: 'button', onclick: () => select('today') }, '今天');
-    const noteDot = h('span', { class: 'live-dot off' }), noteText = h('span');
-    const note = h('p', { class: 'hint rt-head', role: 'status' }, noteDot, noteText);
+    const note = h('p', { class: 'hint', role: 'status' });
     const picks = h('div');
     const stats = h('div', { class: 'stats' }), plot = h('div', { style: { height: '320px', width: '100%' }, 'aria-label': '全天每五分钟的平均在飞和峰值，以及前几天同一时段的对照' });
     const days = h('tbody'), dhead = h('thead');
@@ -1296,7 +1289,7 @@
     const pctOf = (a, b) => (a === null || a === undefined || b === null || b === undefined || b <= 0 ? '' : `${a >= b ? '↑' : '↓'}${Math.abs(((a - b) / b) * 100).toFixed(0)}%`);
     function draw() {
       if (!data || !chart || !data.count) return;
-      const theme = chartTheme(), b = baseOpt(theme), d = data, G = grain, N = 288 / G, step = d.step * G;  // chartTheme() 同时更新 CH / PALETTE
+      const theme = chartTheme(), b = baseOpt(theme), d = data, G = grain, N = 288 / G, step = d.step * G;
       // 按所选粒度合并：平均按样本数加权，峰值取最大；对照线取每段里有数的 5 分钟平均再平均
       const raw = Array(288).fill(null);
       for (const row of d.buckets) if (row.i < 288) raw[row.i] = row;
@@ -1313,9 +1306,9 @@
       const isToday = d.day === d.today, back = (day) => Math.round((Date.parse(d.day) - Date.parse(day)) / 86400000);
       const items = [
         { key: 'avg', name: '平均并发', label: isToday ? '今天平均' : `${d.day.slice(5)} 平均`, color: PALETTE[0], def: true },
-        { key: 'peak', name: '采样峰值', label: isToday ? '今天峰值' : `${d.day.slice(5)} 峰值`, color: CH.soft(.5), def: true },
-        yd ? { key: 'yd', name: ydName, label: ydName, color: CH.muted, dash: 'dashed', def: true } : null,
-        avgN ? { key: 'avgN', name: avgName, label: avgName, color: CH.faint, dash: 'dotted', def: true } : null,
+        { key: 'peak', name: '采样峰值', label: isToday ? '今天峰值' : `${d.day.slice(5)} 峰值`, color: PALETTE[1], def: true },
+        yd ? { key: 'yd', name: ydName, label: ydName, color: '#f59e0b', dash: 'dashed', def: true } : null,
+        avgN ? { key: 'avgN', name: avgName, label: avgName, color: '#10b981', dash: 'dotted', def: true } : null,
         ...older.map((x, k) => ({ key: 'd' + back(x.day), name: olderName(x), label: olderName(x), color: DAY_COLORS[k % DAY_COLORS.length], def: false })),
       ].filter(Boolean);
       const pk = linePicker('polo_pool_lines', items, () => draw());
@@ -1338,9 +1331,9 @@
         xAxis: axisX(theme, bins.map((_, i) => hhmm(d.start + i * step)), { boundaryGap: false }), yAxis: axisY(theme, (v) => num(v), { min: 0, minInterval: 1 }),
         series: [
           { name: '平均并发', type: 'line', showSymbol: true, symbolSize: G > 1 ? 4 : 3, connectNulls: false, data: bins.map((r) => (r ? r.avg : null)), lineStyle: { width: 2.5, color: PALETTE[0] }, itemStyle: { color: PALETTE[0] }, z: 5 },
-          { name: '采样峰值', type: 'line', showSymbol: true, symbolSize: 2, connectNulls: false, data: bins.map((r) => (r ? r.peak : null)), lineStyle: { width: 1, color: CH.soft(.5) }, itemStyle: { color: CH.soft(.5) }, z: 4 },
-          yd ? { name: ydName, type: 'line', showSymbol: false, connectNulls: false, data: yd.avg, lineStyle: { width: 2, type: 'dashed', color: CH.muted }, itemStyle: { color: CH.muted }, z: 3 } : null,
-          avgN ? { name: avgName, type: 'line', showSymbol: false, connectNulls: false, data: avgN, lineStyle: { width: 2, type: 'dotted', color: CH.faint }, itemStyle: { color: CH.faint }, z: 3 } : null,
+          { name: '采样峰值', type: 'line', showSymbol: true, symbolSize: 2, connectNulls: false, data: bins.map((r) => (r ? r.peak : null)), lineStyle: { width: 1, opacity: 0.55, color: PALETTE[1] }, itemStyle: { color: PALETTE[1] }, z: 4 },
+          yd ? { name: ydName, type: 'line', showSymbol: false, connectNulls: false, data: yd.avg, lineStyle: { width: 2, type: 'dashed', color: '#f59e0b' }, itemStyle: { color: '#f59e0b' }, z: 3 } : null,
+          avgN ? { name: avgName, type: 'line', showSymbol: false, connectNulls: false, data: avgN, lineStyle: { width: 2, type: 'dotted', color: '#10b981' }, itemStyle: { color: '#10b981' }, z: 3 } : null,
           ...older.map((x, k) => ({ name: olderName(x), type: 'line', showSymbol: false, connectNulls: false, data: x.avg, lineStyle: { width: 1.4, opacity: 0.85, color: DAY_COLORS[k % DAY_COLORS.length] }, itemStyle: { color: DAY_COLORS[k % DAY_COLORS.length] }, z: 2 })),
         ].filter(Boolean) }, true);
     }
@@ -1349,7 +1342,7 @@
     }
     async function load() {
       const id = ++seq, valid = () => id === seq && main.isConnected;
-      if (!data) { noteDot.classList.add('off'); noteText.textContent = '正在读取并发记录…'; }
+      if (!data) note.textContent = '正在读取并发记录…';
       try {
         const d = await api('GET', '/me/pool-trend/' + choice);
         if (!valid()) return;
@@ -1365,15 +1358,14 @@
           isToday
             ? statCard('昨天同一时刻', num(C.yd && curI !== null ? C.yd.avg[curI] : null), 'clock', 'cyan', curI !== null ? `${hhmm(d.start + curI * d.step)} 那 5 分钟的平均 · 近 ${C.cm.length} 天平均 ${num(C.avgAt(curI))}` : '暂无采样')
             : statCard(`近 ${C.cm.length} 天日均`, num(C.spanAvg), 'clock', 'cyan', C.spanAvg !== null ? `${d.day.slice(5)} ${pctOf(d.avg, C.spanAvg) || '持平'}` : '前几天没有采样'));
-        noteDot.classList.toggle('off', !(d.count && !stale && choice === 'today'));
-        noteText.textContent = !d.count ? `${d.day} 还没有采样记录` : stale ? '采样暂未更新，显示最后一次真实读数' : `${d.day} · 最新样本 ${hhmm(d.last_at)}${choice === 'today' ? ' · 每 15 秒自动更新' : ''}`;
+        note.textContent = !d.count ? `${d.day} 还没有采样记录。` : stale ? '采样暂未更新，显示最后一次真实读数。' : `${d.day} · 最新样本 ${hhmm(d.last_at)}${choice === 'today' ? ' · 每 15 秒自动更新' : ''}`;
         const spanCol = isToday && d.compare.cut < 86400, spanOf = (r) => (r.day === d.day ? d.avg : ((C.cm.find((x) => x.day === r.day) || {}).span_avg ?? null));
         clear(dhead, h('tr', {}, ['日期', '平均并发', spanCol ? `00:00–${cutTxt} 平均` : null, '采样峰值', '样本数'].filter(Boolean).map((t) => h('th', { text: t }))));
         clear(days, d.days.length ? d.days.map((r) => h('tr', {}, h('td', {}, h('button', { class: 'btn btn-ghost btn-sm', type: 'button', onclick: () => select(r.day === d.today ? 'today' : r.day) }, r.day)),
           ...[r.avg, spanCol ? spanOf(r) : undefined, r.peak, r.count].filter((v) => v !== undefined).map((v) => h('td', { text: num(v) })))) : h('tr', {}, h('td', { colspan: spanCol ? '5' : '4', text: '这七天没有采样记录' })));
         plot.hidden = !d.count;
         if (d.count) { await loadECharts(); if (!valid()) return; chart = chart || mkChart(plot); chart.resize(); draw(); }
-      } catch (e) { if (valid()) { noteDot.classList.add('off'); noteText.textContent = '读取失败：' + errText(e) + '。可重新选择日期重试'; } }
+      } catch (e) { if (valid()) note.textContent = '读取失败：' + errText(e) + '。可重新选择日期重试。'; }
     }
     dateInput.addEventListener('change', () => { if (dateInput.value && dateInput.validity.valid) select(dateInput.value === dateInput.max ? 'today' : dateInput.value); });
     S.onTheme = draw;
@@ -1461,14 +1453,14 @@
       h('div', { class: 'skeleton sk-line' }), h('div', { class: 'skeleton sk-line' }), h('div', { class: 'skeleton sk-line', style: { width: '80%' } }))));
     const tableWrap = h('div', { class: 'table-wrap' }, table);
     const listBox = h('div', {}, view === 'card' ? grid : tableWrap);
-    append(main, notices, h('div', { class: 'row wrap', style: { marginBottom: '8px' } },
+    append(main, notices, h('div', { class: 'row wrap', style: { marginBottom: '10px' } },
       h('a', { class: 'btn btn-secondary btn-sm', href: '#/pool-trend' }, icon('activity', 'icon icon-sm'), '查看总池并发走势')), rtBlock, stats,
       h('div', { class: 'card' },
         h('div', { class: 'card-head' },
           h('div', { class: 'row wrap' }, h('h2', { class: 'card-title' }, icon('server'), '账号额度'), countText),
           h('div', { class: 'toolbar dash-tools' }, search.wrap, seg, h('div', { class: 'sort-group' }, sortSel, dirBtn), outToggle, viewSeg)),
         ownerBar ? h('div', { class: 'card-head own-head' }, ownerBar) : null,
-        h('div', { class: 'card-head', style: { borderBottom: '1px solid var(--border)', paddingTop: '8px', paddingBottom: '8px' } },
+        h('div', { class: 'card-head', style: { borderBottom: '1px solid var(--border)', paddingTop: '10px', paddingBottom: '10px' } },
           updated, h('div', { class: 'toolbar' }, auto.el, refreshBtn)),
         listBox),
       admin ? ops : null);
@@ -1519,7 +1511,7 @@
       const a = S.dash && S.dash.accounts;
       if (!a || !a.sampled_at) { clear(updated); return; }
       clear(updated, icon('clock', 'icon icon-sm'), `数据采集于 ${fmtTime(a.sampled_at, false)}（${ago(a.sampled_at)}）`,
-        a.stale ? h('span', { class: 'badge b-warn', style: { marginLeft: '8px' }, text: '可能已过期' }) : null);
+        a.stale ? h('span', { class: 'badge b-warn', style: { marginLeft: '6px' }, text: '可能已过期' }) : null);
     }
     function drawRt() {
       if (!admin || !S.dash) return;
@@ -1654,7 +1646,7 @@
           : h('div', { class: 'rec-list' }, list.map((a) => h('div', { class: 'small', style: { padding: '4px 0', borderBottom: '1px solid var(--border)' }, title: recoverSteps(a) + (a.note ? '\n' + a.note : '') },
             h('span', { class: 'faint', text: fmtTime(a.requested_at, false) + ' ' }),
             h('b', { text: names[a.account_key] || a.account_key }),
-            h('span', { class: 'chip', style: { marginLeft: '8px' }, text: a.why === 'auto' ? (a.mode === 'clear-error' ? '自动 · 代理报错' : '自动') : '手动' }),
+            h('span', { class: 'chip', style: { marginLeft: '6px' }, text: a.why === 'auto' ? (a.mode === 'clear-error' ? '自动 · 代理报错' : '自动') : '手动' }),
             h('div', { class: a.outcome === 'recovered' || a.outcome === 'already_ok' ? '' : 'faint', text: recoverText(a) }))));
       return h('div', { class: 'card' },
         h('div', { class: 'card-head' }, h('h3', { class: 'card-title' }, icon('refresh'), '账号恢复'), sw),
@@ -1778,7 +1770,7 @@
     append(main, notice, stats, h('div', { class: 'card' },
       h('div', { class: 'card-head' }, h('div', { class: 'row wrap' }, h('h2', { class: 'card-title' }, icon('archive'), '归档账号'), count),
         h('div', { class: 'toolbar' }, search.wrap, seg)),
-      h('div', { class: 'card-head', style: { paddingTop: '8px', paddingBottom: '8px' } }, updated, refresh),
+      h('div', { class: 'card-head', style: { paddingTop: '10px', paddingBottom: '10px' } }, updated, refresh),
       h('div', { class: 'table-wrap' }, h('table', { class: 'table responsive wide archived' },
         h('thead', {}, h('tr', {}, ['账号 / 邮箱', '归档原因', '归档时间', '添加时间', '在池时长', '最后使用', '类型 / 健康'].map((t) => h('th', { text: t })))), tbody)), moreRow));
 
@@ -1808,7 +1800,7 @@
           h('td', { 'data-label': '' },
             h('div', { class: 'cell-title', text: dash(r.display_name) }),
             r.email ? h('div', { class: 'email mono', title: r.email + '（点击复制）', onclick: () => copy(r.email, '邮箱') }, r.email) : null,
-            r.in_pool ? h('div', { class: 'chips', style: { marginTop: '4px' } }, h('span', { class: 'chip chip-blue', title: '同一邮箱当前又在账号池中，这条是之前的归档记录', text: '已重新添加（在账号池中）' })) : null),
+            r.in_pool ? h('div', { class: 'chips', style: { marginTop: '5px' } }, h('span', { class: 'chip chip-blue', title: '同一邮箱当前又在账号池中，这条是之前的归档记录', text: '已重新添加（在账号池中）' })) : null),
           h('td', { 'data-label': '归档原因' }, h('span', { class: 'badge ' + bc, text: bt }),
             r.error ? h('div', { class: 'err-text', title: r.error, text: r.error }) : null),
           h('td', { 'data-label': '归档时间', class: 'nowrap' }, h('div', { text: fmtTime(r.archived_at) }), h('div', { class: 'cell-sub', text: ago(r.archived_at) || '' })),
@@ -1825,7 +1817,7 @@
         res = await api('GET', '/v1/archived-accounts');
         recs = (res.data && res.data.records) || [];
         clear(updated, icon('clock', 'icon icon-sm'), `数据采集于 ${fmtTime(res.sampled_at, false)}（${ago(res.sampled_at)}）`,
-          res.stale ? h('span', { class: 'badge b-warn', style: { marginLeft: '8px' }, text: '可能已过期' }) : null);
+          res.stale ? h('span', { class: 'badge b-warn', style: { marginLeft: '6px' }, text: '可能已过期' }) : null);
         clear(notice, res.data && res.data.complete === false ? h('div', { class: 'notice n-warn' }, icon('warning'), h('span', { text: '后台归档列表没有读全，显示的不是全部归档账号。' })) : null);
         drawStats(); draw();
       } catch (e) {
@@ -2056,9 +2048,9 @@
         xAxis: axisY(t, (v) => v + '%', { min: xmin, max: 100, name: '缓存占比', nameLocation: 'middle', nameGap: 26, nameTextStyle: { color: t.muted, fontSize: 11 } }),
         yAxis: axisY(t, (v) => '$' + (v >= 10 ? Math.round(v) : v.toFixed(1))),
         series: [
-          { name: '每一段', type: 'scatter', data: sp, symbolSize: (v, p) => Math.min(16, 5 + (p.data.s.p1 - p.data.s.p0) * 1.2), itemStyle: { color: CH.soft(.45), borderColor: CH.accent } },
-          { name: '整个窗口', type: 'scatter', symbol: 'diamond', symbolSize: 13, data: wins.map((w) => ({ value: [Math.round(w.cache_share * 1000) / 10, qwFull(w) / 100], w })), itemStyle: { color: CH.strong } },
-          { name: '拟合', type: 'line', data: fit, symbol: 'none', silent: true, lineStyle: { color: CH.muted, width: 2, type: 'dashed' } },
+          { name: '每一段', type: 'scatter', data: sp, symbolSize: (v, p) => Math.min(16, 5 + (p.data.s.p1 - p.data.s.p0) * 1.2), itemStyle: { color: 'rgba(59,130,246,.55)', borderColor: '#3b82f6' } },
+          { name: '整个窗口', type: 'scatter', symbol: 'diamond', symbolSize: 13, data: wins.map((w) => ({ value: [Math.round(w.cache_share * 1000) / 10, qwFull(w) / 100], w })), itemStyle: { color: '#f59e0b' } },
+          { name: '拟合', type: 'line', data: fit, symbol: 'none', silent: true, lineStyle: { color: '#ef4444', width: 2, type: 'dashed' } },
         ],
       }), true);
     }
@@ -2092,7 +2084,7 @@
         const a = accts[k], r5 = (a.recent['5h'] || []).filter(has), r7 = (a.recent['7d'] || []).filter(has);
         const avg = r5.length ? r5.reduce((s, w) => s + w.usd, 0) / r5.length : null, last7 = r7.length ? r7[r7.length - 1] : null;
         return h('tr', { class: 'qw-row' + (k === key ? ' on' : ''), onclick: () => pick(k, null, true) },
-          h('td', { 'data-label': '' }, h('div', { class: 'qw-name' }, h('b', { text: nm(k) }, gone(k) ? h('span', { class: 'chip', style: { marginLeft: '8px' }, title: '不在当前账号列表里', text: '已归档' }) : null),
+          h('td', { 'data-label': '' }, h('div', { class: 'qw-name' }, h('b', { text: nm(k) }, gone(k) ? h('span', { class: 'chip', style: { marginLeft: '6px' }, title: '不在当前账号列表里', text: '已归档' }) : null),
             sub(k) && sub(k) !== nm(k) ? h('span', { class: 'faint xs mono', text: sub(k) }) : null)),
           h('td', { 'data-label': '当前 5h 窗口' }, cur(a.current['5h'], '5h', gone(k))),
           h('td', { 'data-label': '当前 7d 窗口' }, cur(a.current['7d'], '7d', gone(k))),
@@ -2157,9 +2149,9 @@
         dataZoom: zoom ? [{ type: 'inside', startValue: n - 30, endValue: n - 1 }, { type: 'slider', height: 18, bottom: 8, startValue: n - 30, endValue: n - 1, borderColor: t.border, textStyle: { color: t.muted } }] : [],
         series: [
           { name: '已跑额度', type: 'bar', barMaxWidth: 34, data: ws.map((w) => ({ value: has(w) ? w.usd : null,
-            itemStyle: { borderRadius: [4, 4, 0, 0], color: w.rejected_at ? CH.bad : w.state === 'final' ? CH.accent : CH.soft(.4) } })) },
+            itemStyle: { borderRadius: [5, 5, 0, 0], color: w.rejected_at ? grad(E, '#f87171', '#dc2626') : w.state === 'final' ? grad(E, '#60a5fa', '#6366f1') : grad(E, 'rgba(96,165,250,.5)', 'rgba(99,102,241,.4)') } })) },
           { name: '用量 %', type: 'line', yAxisIndex: 1, smooth: true, symbolSize: 6, connectNulls: true, data: ws.map((w) => (typeof w.last_pct === 'number' ? w.last_pct : null)),
-            lineStyle: { width: 2, color: CH.muted }, itemStyle: { color: CH.muted } },
+            lineStyle: { width: 2, color: '#f59e0b' }, itemStyle: { color: '#f59e0b' } },
         ],
       }), true);
     }
@@ -2174,7 +2166,7 @@
           h('td', { 'data-label': '请求', class: 'num', text: compact(w.requests) }),
           h('td', { 'data-label': 'Token', class: 'num', text: compact(w.tokens) }),
           h('td', { 'data-label': '其中 Opus / Fable', class: 'num faint', text: has(w) ? `${usd(w.opus)} / ${usd(w.fable)}` : '—' }),
-          h('td', { 'data-label': '用量 %' }, h('div', { class: 'row', style: { gap: '8px', flexWrap: 'wrap' } },
+          h('td', { 'data-label': '用量 %' }, h('div', { class: 'row', style: { gap: '6px', flexWrap: 'wrap' } },
             typeof w.last_pct === 'number' ? h('span', { class: w.last_pct >= 90 ? 'text-bad' : w.last_pct >= 75 ? 'text-warn' : '', text: pct(w.last_pct) + (w.peak_pct && w.peak_pct !== w.last_pct ? `（最高 ${pct(w.peak_pct)}）` : '') }) : h('span', { class: 'faint', text: '—' }),
             w.capacity_change ? h('span',{class:'chip',title:'原窗口的金额继续累计，升级前的满额不代表当前状态。',text:'升级前曾满'}) : null,
             w.rejected_at ? h('span', { class: 'chip chip-warn', title: '当前席位在本窗用满', text: w.capacity_change?'升级后打满':'打满' }) : null)),
@@ -2222,7 +2214,7 @@
         if (!ov) { clear(ovBody, h('tr', {}, h('td', { colspan: '5' }, emptyState(errText(e), 'warning')))); }
       }
     }
-    clear(ovBody, h('tr', {}, h('td', { colspan: '5' }, h('div', { class: 'skeleton sk-line', style: { width: '60%', margin: '16px auto' } }))));
+    clear(ovBody, h('tr', {}, h('td', { colspan: '5' }, h('div', { class: 'skeleton sk-line', style: { width: '60%', margin: '18px auto' } }))));
     S.onTheme = () => { drawChart(); drawCacheChart(); };
     S.timers.push(setInterval(() => { if (!document.hidden) load(true); }, 60000));
     drawCache();
@@ -2293,8 +2285,8 @@
     const nm = (a && a.name) || name || (key.startsWith('id:') ? '未识别账号' : key);
     const em = a && a.email;
     return h('div', {}, h('b', { text: nm }), em ? h('div', { class: 'email mono', text: em }) : null,
-      a && a.status === 'archived' ? h('span', { class: 'chip', style: { marginTop: '4px' }, text: '已归档' }) : null,
-      a && a.status === 'unknown' ? h('span', { class: 'chip chip-warn', style: { marginTop: '4px' }, text: '待确认邮箱' }) : null);
+      a && a.status === 'archived' ? h('span', { class: 'chip', style: { marginTop: '3px' }, text: '已归档' }) : null,
+      a && a.status === 'unknown' ? h('span', { class: 'chip chip-warn', style: { marginTop: '3px' }, text: '待确认邮箱' }) : null);
   }
   function rangeText(s, e) { return `${fmtSec(s)} → ${fmtSec(e)}`; }
   function fmtSec(v) { if (v === null || v === undefined) return '—'; const d = toDate(v); return isNaN(d) ? '—' : d.toLocaleString('sv-SE', { timeZone: 'Asia/Shanghai', hour12: false }); }
@@ -2377,7 +2369,7 @@
     });
     fillSources();
     return {
-      el: h('div', { class: 'pay-box' }, h('div', { class: 'row wrap', style: { gap: '8px' } }, h('span', { class: 'label', text: '付款方式' }), seg), usdtBox),
+      el: h('div', { class: 'pay-box' }, h('div', { class: 'row wrap', style: { gap: '10px' } }, h('span', { class: 'label', text: '付款方式' }), seg), usdtBox),
       get() {
         if (cur !== 'USDT') return { pay_currency: 'CNY' };
         const rate = Number(rateIn.value);
@@ -2681,7 +2673,7 @@
           h('div', { class: 'notice n-info' }, icon('clock'), h('span', {}, '结算截止 ', h('b', { text: fmtSec(res.cutoff) }),
             res.prior_day && !until ? '（北京时间昨天结束）。包含此前未结的部分，今天的额度和调整不计入本单。' : until ? `（上家结算点，北京时间）。确认后 ${who} 名下每个号的结算点都写到这一秒，之后的额度留到下次。` : `（点击时间前 2 分钟，北京时间）。确认后 ${who} 名下每个号的结算点都写到这一秒，下次从下一秒开始。`)),
           windowsTable(res.items, acctMap(st.accounts)),
-          res.unmatched && res.unmatched.length ? h('div', { class: 'notice n-warn', style: { marginTop: '8px' } }, icon('warning'), h('span', { text: `注意：有 ${res.unmatched.length} 个 Polo 账号没对应到邮箱，不计入任何成员。` })) : null,
+          res.unmatched && res.unmatched.length ? h('div', { class: 'notice n-warn', style: { marginTop: '10px' } }, icon('warning'), h('span', { text: `注意：有 ${res.unmatched.length} 个 Polo 账号没对应到邮箱，不计入任何成员。` })) : null,
           L.breakdown ? h('div',{class:'calc'},L.breakdown.map(([label,value],i)=>step(label,value,i===L.breakdown.length-1?'total':''))) : h('div', { class: 'calc' },
             step('额度', usd4(L.usd + L.adjust_usd), '', L.adjust_usd ? `账号 ${usd4(L.usd)} + 调整 ${usd(L.adjust_usd)}` : null),
             step(`× 汇率 ¥${L.rate}/$ = 毛收入`, cny(L.gross_cny)),
@@ -2689,7 +2681,7 @@
             step(`参与分成 ${cny(L.shared_cny)} × 我抽 ${L.admin_share}% = 我的抽成`, cny(L.admin_cny)),
             step('应付成员 = 毛收入 − 我的抽成', cny(L.member_cny), 'total')),
           pay.el,
-          h('label', { class: 'check', style: { margin: '12px 0 8px' } }, markPaid, h('span', { text: '已经付过款了，直接标记为“已付款”' })),
+          h('label', { class: 'check', style: { margin: '12px 0 6px' } }, markPaid, h('span', { text: '已经付过款了，直接标记为“已付款”' })),
           paidNote, h('div', { style: { marginTop: '8px' } }, note),
           h('p', { class: 'hint', text: '预览 30 分钟内有效。点错了可以在“成员结算记录”里撤销这位成员最近一张（未付款时），结算点会退回原处。' }));
       } catch (e) { if (my === seq) clear(box, h('div', { class: 'notice n-bad' }, icon('warning'), h('span', { text: errText(e) }))); }
@@ -2830,7 +2822,7 @@
       const gapTxt = Math.abs(gap) >= 0.00005 ? (gap > 0 ? `，比记账多 ${usd4(gap)}（结转到下一段）` : `，比记账少 ${usd4(-gap)}（抵掉上次结转）`) : '';
       const how = (x.mode === 'time' ? `${MODE_CN.time}：${fmtSec(x.target)}` : `${MODE_CN[x.mode]} ${usd4(x.target)}`) + ` · 记账 ${usd4(x.usd)} · Polo 实际 ${usd4(polo)}${gapTxt}`;
       const exp = h('tr', { class: 'exp-row', hidden: true }, h('td', { colspan: String(COLS.length) }, splitTable(bd, info, x.coverage),
-        h('div', { class: 'faint xs', style: { marginTop: '8px' }, text: `${how} · ${x.created_by || ''} 录入于 ${fmtTime(x.created_at)}${x.note ? ' · 备注：' + x.note : ''}${voided ? ` · ${x.voided_by || ''} 于 ${fmtTime(x.voided_at)} 撤销` : ''}` })));
+        h('div', { class: 'faint xs', style: { marginTop: '6px' }, text: `${how} · ${x.created_by || ''} 录入于 ${fmtTime(x.created_at)}${x.note ? ' · 备注：' + x.note : ''}${voided ? ` · ${x.voided_by || ''} 于 ${fmtTime(x.voided_at)} 撤销` : ''}` })));
       const covs = Object.entries(x.coverage || {}).map(([u, c]) => h('span', { class: 'chip ' + (c.covered ? 'chip-ok' : 'chip-warn'), title: c.covered ? '已给成员结清这一段' : c.never ? '还没给成员结算' : `给成员结到 ${fmtSec(c.settled_until)}` }, (c.covered ? '✓ ' : '') + uname(Number(u))));
       const ops = h('div', { class: 'row', style: { gap: '4px' } },
         !voided ? h('button', { class: 'btn btn-ghost btn-xs', type: 'button', onclick: (e) => { e.stopPropagation(); upstreamEditModal(x, reload); } }, '改收款') : null,
@@ -2840,7 +2832,7 @@
           try { await api('POST', '/admin/settle/up/void/' + x.id); toast('已撤销', 'ok'); reload(); } catch (err) { toast(errText(err), 'bad'); }
         } }, '撤销') : null);
       const tr = h('tr', { class: 'click' + (voided ? ' voided-row' : ''), onclick: () => { exp.hidden = !exp.hidden; tr.classList.toggle('open', !exp.hidden); } },
-        h('td', { 'data-label': '' }, h('b', { text: voided ? '—' : `第 ${idx} 次` }), voided ? h('span', { class: 'badge b-gray', style: { marginLeft: '8px' }, text: '已撤销' }) : null, h('div', { class: 'faint xs', text: `#${x.id}` })),
+        h('td', { 'data-label': '' }, h('b', { text: voided ? '—' : `第 ${idx} 次` }), voided ? h('span', { class: 'badge b-gray', style: { marginLeft: '6px' }, text: '已撤销' }) : null, h('div', { class: 'faint xs', text: `#${x.id}` })),
         h('td', { 'data-label': '区间', class: 'small nowrap' }, h('div', { class: 'faint', text: fmtSec(x.start_at) }), h('div', {}, '→ ', h('b', { text: fmtSec(x.end_at) }))),
         h('td', { 'data-label': '额度', class: 'num' }, h('div', { class: 'money-strong', title: '记账额度（上家给的数）' }, usd4(x.usd)),
           Math.abs(gap) >= 0.00005 ? h('div', { class: 'faint xs', title: '这一段 Polo 实际额度' }, 'Polo ' + usd4(polo)) : null),
@@ -2906,13 +2898,13 @@
       xAxis: { type: 'time', axisLine: { lineStyle: { color: t.border } }, axisTick: { show: false }, splitLine: { show: false }, axisLabel: { color: t.muted, fontSize: 11, hideOverlap: true } },
       yAxis: axisY(t, shortUsd),
       series: [
-        { name: '累计额度', type: 'line', data: line, showSymbol: false, smooth: 0.15, lineStyle: { width: 2.5, color: CH.accent }, itemStyle: { color: CH.accent },
-          areaStyle: { color: grad(E, CH.soft(.14), CH.soft(0)) },
-          markArea: p && p.usd + (st.carry || 0) > 0 ? { silent: true, itemStyle: { color: hexA(CH.warn, .12) }, label: { show: !isPhone(), position: 'insideTop', color: CH.warnInk, fontWeight: 500, formatter: '待结算 ' + usd(p.usd + (st.carry || 0)) },
+        { name: '累计额度', type: 'line', data: line, showSymbol: false, smooth: 0.15, lineStyle: { width: 2.5, color: '#6366f1' }, itemStyle: { color: '#6366f1' },
+          areaStyle: { color: grad(E, 'rgba(99,102,241,.28)', 'rgba(99,102,241,0)') },
+          markArea: p && p.usd + (st.carry || 0) > 0 ? { silent: true, itemStyle: { color: 'rgba(245,158,11,.12)' }, label: { show: !isPhone(), position: 'insideTop', color: '#d97706', fontWeight: 700, formatter: '待结算 ' + usd(p.usd + (st.carry || 0)) },
             data: [[{ xAxis: lastEnd * 1000 }, { xAxis: p.end * 1000 }]] } : undefined,
-          markLine: pts.length ? { silent: true, symbol: 'none', lineStyle: { color: CH.ok, type: 'dashed', width: 1.2 }, label: { show: false }, data: pts.map((x) => ({ xAxis: x.value[0] })) } : undefined },
-        { name: '结算点', type: 'scatter', data: pts, symbolSize: 13, z: 10, itemStyle: { color: CH.ok, borderColor: t.card, borderWidth: 2 },
-          label: { show: true, position: 'top', color: t.text, fontWeight: 600, fontSize: 11, formatter: (q) => `第${q.data.n}次 ${shortUsd(q.data.usd)}` }, animationDelay: (i) => 600 + i * 120 },
+          markLine: pts.length ? { silent: true, symbol: 'none', lineStyle: { color: '#10b981', type: 'dashed', width: 1.2 }, label: { show: false }, data: pts.map((x) => ({ xAxis: x.value[0] })) } : undefined },
+        { name: '结算点', type: 'scatter', data: pts, symbolSize: 13, z: 10, itemStyle: { color: '#10b981', borderColor: t.card, borderWidth: 2 },
+          label: { show: true, position: 'top', color: t.text, fontWeight: 700, fontSize: 11, formatter: (q) => `第${q.data.n}次 ${shortUsd(q.data.usd)}` }, animationDelay: (i) => 600 + i * 120 },
       ],
     }));
     // 每段的构成
@@ -3006,7 +2998,7 @@
     });
     modal({ title: preset ? preset.title : '添加上家结算点', wide: true,
       body: h('div', {}, h('div', { class: 'row wrap until-row' }, h('span', { class: 'label', text: '怎么算' }), seg), inputBox, resBox,
-        h('div', { class: 'grid-half', style: { marginTop: '12px' } }, field('上家付了多少（可不填）', h('div', { class: 'row', style: { gap: '8px' } }, recv, recvCur)), field('备注', note)),
+        h('div', { class: 'grid-half', style: { marginTop: '14px' } }, field('上家付了多少（可不填）', h('div', { class: 'row', style: { gap: '8px' } }, recv, recvCur)), field('备注', note)),
         h('p', { class: 'hint', text: '先点“查找达成时间”，确认无误再添加。结算点记在额度达成的那一秒；点错了可以撤销最近一个。' })),
       actions: [{ label: '取消' }, { label: '确认添加', kind: 'btn-primary', onClick: async () => {
         if (!res) { toast('先点“查找达成时间”', 'bad'); return false; }
@@ -3102,8 +3094,8 @@
     if (!L) return [h('tr', {}, h('td', { colspan: String(ncol), class: 'faint', text: `#${s.id} 没有成员明细` }))];
     const meta = `${s.created_by || ''} 于 ${fmtTime(s.created_at)} 生成${s.note ? ' · 备注：' + s.note : ''}${voided ? ` · ${s.voided_by || ''} 于 ${fmtTime(s.voided_at)} 撤销` : ''}${L.paid_at ? ` · ${L.paid_by || ''} 于 ${fmtTime(L.paid_at)} 标记付款${L.paid_note ? '（' + L.paid_note + '）' : ''}` : ''}`;
     const exp = h('tr', { class: 'exp-row', hidden: true }, h('td', { colspan: String(ncol) }, windowsTable(s.items, info), lineRecovery(L),
-      h('div', { class: 'faint xs', style: { marginTop: '8px' }, text: L.description || `毛收入 ${cny(L.gross_cny)} = 回本 ${cny(L.recover_cny)}（不分成） + 参与分成 ${cny(L.shared_cny)}（我抽 ${L.admin_share}%）` }),
-      h('div', { class: 'faint xs', style: { marginTop: '4px' }, text: meta })));
+      h('div', { class: 'faint xs', style: { marginTop: '6px' }, text: L.description || `毛收入 ${cny(L.gross_cny)} = 回本 ${cny(L.recover_cny)}（不分成） + 参与分成 ${cny(L.shared_cny)}（我抽 ${L.admin_share}%）` }),
+      h('div', { class: 'faint xs', style: { marginTop: '3px' }, text: meta })));
     const payBtn = h('button', { class: 'btn btn-xs ' + (L.paid_at ? 'btn-paid' : 'btn-secondary'), type: 'button', disabled: voided, title: L.paid_at ? `${L.paid_by || ''} 于 ${fmtTime(L.paid_at)} 标记${L.paid_note ? '\n备注：' + L.paid_note : ''}` : '标记为已付款' },
       icon(L.paid_at ? 'check' : 'clock', 'icon icon-sm'), L.paid_at ? '已付款' : '未付款');
     payBtn.addEventListener('click', (e) => { e.stopPropagation(); payModal(s, L, st, reload); });
@@ -3115,7 +3107,7 @@
         try { await api('POST', '/admin/settle/void/' + s.id); toast('已撤销', 'ok'); reload(); } catch (err) { toast(errText(err), 'bad'); }
       } }, '撤销') : null);
     const tr = h('tr', { class: 'click' + (voided ? ' voided-row' : ''), onclick: () => { exp.hidden = !exp.hidden; tr.classList.toggle('open', !exp.hidden); } },
-      h('td', { 'data-label': '' }, h('b', { text: `#${s.id}` }), voided ? h('span', { class: 'badge b-gray', style: { marginLeft: '8px' }, text: '已撤销' }) : null, h('div', { class: 'faint xs', text: ago(s.created_at) })),
+      h('td', { 'data-label': '' }, h('b', { text: `#${s.id}` }), voided ? h('span', { class: 'badge b-gray', style: { marginLeft: '6px' }, text: '已撤销' }) : null, h('div', { class: 'faint xs', text: ago(s.created_at) })),
       h('td', { 'data-label': '成员' }, userName2(s.user_id, L.username), h('div', { class: 'faint xs', text: `${L.accounts} 个号` })),
       h('td', { 'data-label': '区间', class: 'small nowrap' }, h('div', { text: fmtSec(s.start_at) }), h('div', { class: 'faint', text: '→ ' + fmtSec(s.end_at) })),
       h('td', { 'data-label': '额度', class: 'num', title: usd4(L.usd) }, usd(r2(L.usd + L.adjust_usd))),
@@ -3139,7 +3131,7 @@
     }
     const pay = payPicker(st.rates, () => L.member_cny, s.pay_currency === 'USDT' ? { currency: 'USDT', rate: s.usdt_rate, source: s.rate_source, rate_at: s.rate_at } : {});
     const note = h('input', { class: 'input', maxlength: '200', placeholder: '例如：微信转账 / 支付宝单号 / 交易哈希（可选）' });
-    modal({ title: `标记已付款 · ${who}`, body: h('div', {}, h('p', {}, `#${s.id} 应付 `, h('b', { class: 'money-strong', text: cny(L.member_cny) })), pay.el, h('div', { style: { marginTop: '8px' } }, field('付款备注', note))),
+    modal({ title: `标记已付款 · ${who}`, body: h('div', {}, h('p', {}, `#${s.id} 应付 `, h('b', { class: 'money-strong', text: cny(L.member_cny) })), pay.el, h('div', { style: { marginTop: '10px' } }, field('付款备注', note))),
       actions: [{ label: '取消' }, { label: '标记已付款', kind: 'btn-primary', onClick: async () => {
         const p = pay.get();
         if (!p) { toast('请填写 USDT 汇率', 'bad'); return false; }
@@ -3213,13 +3205,13 @@
       radios.push(r);
       return h('label', { class: 'radio-row' }, r, h('div', { class: 'grow' }, h('b', { text: label }), sub ? h('div', { class: 'faint xs', text: sub }) : null, extra || null));
     };
-    const customRow = opt('custom', '自定义时间（北京时间，精确到秒）', lo ? `最早可选 ${fmtSec(lo)}（不能早于之前的归属或已经结算到的时间），不能晚于现在` : '不能晚于现在', h('div', { style: { marginTop: '8px' } }, custom));
+    const customRow = opt('custom', '自定义时间（北京时间，精确到秒）', lo ? `最早可选 ${fmtSec(lo)}（不能早于之前的归属或已经结算到的时间），不能晚于现在` : '不能晚于现在', h('div', { style: { marginTop: '6px' } }, custom));
     custom.addEventListener('focus', () => { mode = 'custom'; radios.forEach((r) => { r.checked = r.value === 'custom'; }); });
     const prev = open ? uname(open.user_id) : null;
     modal({ title: `${a.name || a.key} 归给 ${uname(uid)}`, onClose: () => { if (!ok) reload(); },
       body: h('div', {},
         open ? h('div', { class: 'notice n-info' }, icon('info'), h('span', { text: `现在归 ${prev}（自 ${fmtSec(open.from_ts)}${open.settled_until ? `，已结算到 ${fmtSec(open.settled_until)}` : '，还没结算过'}）。${prev} 的归属在新起点的前一秒结束，之前没结算的部分仍然可以给 ${prev} 结算——同一秒只算给一个人，不会重复也不会漏。` })) : null,
-        h('div', { class: 'label', style: { margin: '8px 0 8px' }, text: `从什么时候开始算 ${uname(uid)} 的？` }),
+        h('div', { class: 'label', style: { margin: '6px 0 8px' }, text: `从什么时候开始算 ${uname(uid)} 的？` }),
         opt('now', '从现在开始', open ? `现在之前的额度仍然算 ${prev} 的` : '现在之前的额度算你自己的'),
         canAdded ? opt('added', `从这个号加入 Polo 时开始（${fmtSec(added)}）`, isNew ? '新开的号默认这样：开号到现在的额度都算给成员' : '这个号加入 Polo 早于成本起算时间，一般是你自己的旧号') : null,
         customRow),
@@ -3292,7 +3284,7 @@
       const save = h('button', { class: 'btn btn-secondary btn-xs', type: 'button', onclick: async () => {
         try { await api('POST', '/admin/settle/share', { user_id: u.id, admin_share: inp.value === '' ? null : Number(inp.value) }); toast(`已保存 ${nameOf(u)} 的分成`, 'ok'); } catch (e) { toast(errText(e), 'bad'); }
       } }, '保存');
-      return h('tr', {}, h('td', { 'data-label': '' }, userName2(u.id), u.role === 'admin' ? h('span', { class: 'chip', style: { marginLeft: '8px' }, text: '管理员' }) : null, u.status === 'disabled' ? h('span', { class: 'chip', style: { marginLeft: '8px' }, text: '已停用' }) : null),
+      return h('tr', {}, h('td', { 'data-label': '' }, userName2(u.id), u.role === 'admin' ? h('span', { class: 'chip', style: { marginLeft: '6px' }, text: '管理员' }) : null, u.status === 'disabled' ? h('span', { class: 'chip', style: { marginLeft: '6px' }, text: '已停用' }) : null),
         h('td', { 'data-label': '归属账号', class: 'num', text: owned[u.id] || 0 }), h('td', { 'data-label': '我的抽成' }, h('div', { class: 'row' }, inp, h('span', { class: 'faint small', text: '%' }), h('span', { class: 'm-only' }, save))),
         h('td', { 'data-label': '', class: 'wide' }, out), h('td', { 'data-label': '', class: 'd-only' }, save.cloneNode(true)));
     });
@@ -3332,7 +3324,7 @@
       if (a.status === 'unknown' && a.uuids.length) {
         const mapSel = h('select', { class: 'select select-sm', style: { width: 'auto' } }, h('option', { value: '', text: '选择对应的邮箱…' }), known.map((k) => h('option', { value: k.key, text: `${k.name} · ${k.email || k.key}` })));
         mapSel.addEventListener('change', async () => { if (!mapSel.value) return; try { await api('POST', '/admin/settle/map', { uuid: a.uuids[0], account_key: mapSel.value }); toast('已对应', 'ok'); reload(); } catch (e) { toast(errText(e), 'bad'); } });
-        mapCtl = h('div', { style: { marginTop: '8px' } }, mapSel);
+        mapCtl = h('div', { style: { marginTop: '6px' } }, mapSel);
       }
       const p = plans[a.key];
       let cost;
@@ -3340,16 +3332,16 @@
         const each = a.seat ? cny(s['price_' + a.seat]) : '待定';
         cost = h('div', {}, h('div', { class: 'small', text: `${p.monthly ? (a.team_cycle?'每30天':'每月') : '一次性'} ${each} · ${p.start_day} 起` }),
           p.user_id !== a.owner ? h('div', { class: 'text-warn xs', text: `记在 ${uname(p.user_id)} 名下` }) : null,
-          h('div', { class: 'row', style: { gap: '4px', marginTop: '4px' } },
+          h('div', { class: 'row', style: { gap: '4px', marginTop: '3px' } },
             h('button', { class: 'btn btn-ghost btn-xs', type: 'button', onclick: () => costPlanModal(a, st, reload) }, '修改'),
             h('button', { class: 'btn btn-ghost btn-xs', type: 'button', onclick: () => costPlanStop(a, reload) }, '不计成本')));
       } else if (a.owner) {
-        cost = h('div', {}, h('span', { class: 'faint small', text: '不计成本' }), h('button', { class: 'btn btn-ghost btn-xs', type: 'button', style: { marginLeft: '8px' }, onclick: () => costPlanModal(a, st, reload) }, '记成本'));
+        cost = h('div', {}, h('span', { class: 'faint small', text: '不计成本' }), h('button', { class: 'btn btn-ghost btn-xs', type: 'button', style: { marginLeft: '6px' }, onclick: () => costPlanModal(a, st, reload) }, '记成本'));
       } else cost = h('span', { class: 'faint', text: '—' });
       if(a.team_cycle) cost=h('div',{},cost,h('div',{class:'faint xs',text:'母号：'+(a.team_cycle.day||'日期待定')+' · '+a.team_cycle.source}),h('button',{class:'btn btn-ghost btn-xs',type:'button',onclick:()=>teamDateModal(a,reload)},'设置母号日期'));
       const [bc, bt] = STATUS[a.status] || ['b-gray', a.status];
       return h('tr', {}, h('td', { 'data-label': '' }, acctLabel(a.key, { [a.key]: Object.assign({}, a, { status: '' }) }, a.name), mapCtl),
-        h('td', { 'data-label': '状态' }, h('span', { class: 'badge ' + bc, text: bt }), a.seat ? h('div', { class: 'faint xs', style: { marginTop: '4px' }, text: SEAT_CN[a.seat] + '席位' }) : null),
+        h('td', { 'data-label': '状态' }, h('span', { class: 'badge ' + bc, text: bt }), a.seat ? h('div', { class: 'faint xs', style: { marginTop: '3px' }, text: SEAT_CN[a.seat] + '席位' }) : null),
         h('td', { 'data-label': '能看到的成员', class: 'small' }, a.visible.length ? a.visible.map(unameByLogin).join('、') : h('span', { class: 'faint', text: '—' })),
         h('td', { 'data-label': '结算归属', class: 'wide' }, sel, hist), h('td', { 'data-label': '成本', class: 'wide' }, cost));
     });
@@ -3369,7 +3361,7 @@
   // 服务器给出每一块显示什么（kpis 概览卡片 / tiles 账号卡片 / chart 图表 / steps 计算步骤 / progress 进度条 / 表格），金额都是写好的文字；
   // 这里只按类型画，不做任何结算计算。half: true 的相邻两块在宽屏上并排。
   const RP_ICON = { clock: 'clock', check: 'check', chart: 'chart', trend: 'trend', dollar: 'dollar' };
-  const rpTone = (k) => ({ ok: CH.ok, warn: CH.warn, bad: CH.bad, blue: CH.accent, purple: CH.faint }[k]);  // 服务器给的色调名 → 当前主题里的颜色
+  const RP_TONE = { ok: ['#34d399', '#10b981'], warn: ['#fbbf24', '#f59e0b'], bad: ['#f87171', '#ef4444'], blue: ['#60a5fa', '#3b82f6'], purple: ['#a78bfa', '#8b5cf6'] };
   function rpHead(s, ic) {
     return h('div', { class: 'card-head' }, h('div', {}, h('h3', { class: 'card-title' }, ic ? icon(ic) : null, s.title), s.note ? h('div', { class: 'faint xs rp-note', text: s.note }) : null));
   }
@@ -3383,14 +3375,14 @@
     later.push(() => {
       const t = chartTheme(), E = window.echarts, ch = mkChart(el);
       const f = s.unit === '¥' ? cny : s.unit === '$' ? usd : (v) => String(v), sh = s.unit === '¥' ? shortCny : s.unit === '$' ? shortUsd : (v) => String(v);
-      const col = (x, i) => rpTone(x.tone) || PALETTE[i % PALETTE.length];
+      const col = (x, i) => RP_TONE[x.tone] || [PALETTE[i % PALETTE.length], PALETTE[i % PALETTE.length]];
       if (s.kind === 'pie') {
         const data = s.x.map((n, i) => ({ name: n, value: s.series[0].data[i], itemStyle: { color: PALETTE[i % PALETTE.length] } })).filter((d) => d.value > 0);
         ch.setOption(Object.assign(baseOpt(t), {
           legend: Object.assign(baseOpt(t).legend, { top: 'auto', bottom: 0 }),
           tooltip: Object.assign(baseOpt(t).tooltip, { trigger: 'item', formatter: (p) => `<div class="ct-title">${escHtml(p.name)}</div><div class="ct-row"><i class="ct-dot ${dotCls(p.color)}"></i><span>${escHtml(s.series[0].name)}</span><b>${escHtml(f(p.value))}</b></div><div class="ct-row"><span>占比</span><b>${p.percent}%</b></div>` }),
-          title: s.center ? { text: s.center, subtext: s.center_sub || '', left: 'center', top: '36%', textStyle: { color: t.strong, fontSize: 18, fontWeight: 600 }, subtextStyle: { color: t.muted, fontSize: 11 } } : undefined,
-          series: [{ type: 'pie', radius: ['50%', '74%'], center: ['50%', '45%'], avoidLabelOverlap: true, padAngle: 2, itemStyle: { borderRadius: 2, borderColor: t.card, borderWidth: 2 },
+          title: s.center ? { text: s.center, subtext: s.center_sub || '', left: 'center', top: '36%', textStyle: { color: t.strong, fontSize: 18, fontWeight: 750 }, subtextStyle: { color: t.muted, fontSize: 11 } } : undefined,
+          series: [{ type: 'pie', radius: ['50%', '74%'], center: ['50%', '45%'], avoidLabelOverlap: true, padAngle: 2, itemStyle: { borderRadius: 8, borderColor: t.card, borderWidth: 2 },
             label: { show: false }, emphasis: { scale: true, scaleSize: 6, label: { show: false } }, data, animationType: 'expansion' }],
         }));
         return;
@@ -3401,7 +3393,7 @@
         xAxis: axisX(t, s.x, { axisLabel: { color: t.muted, fontSize: 11, hideOverlap: true, interval: stack ? 'auto' : 0, rotate: !stack && many && isPhone() ? 30 : 0 } }),
         yAxis: axisY(t, sh),
         series: s.series.map((x, i) => ({ name: x.name, type: 'bar', stack: stack ? 'a' : undefined, data: x.data, barMaxWidth: stack ? 28 : 26, barGap: '18%',
-          itemStyle: { color: col(x, i), borderRadius: stack ? 0 : [4, 4, 0, 0] }, emphasis: { focus: 'series' }, animationDelay: (k) => k * 40 })),
+          itemStyle: { color: grad(E, col(x, i)[0], col(x, i)[1]), borderRadius: stack ? 0 : [6, 6, 0, 0] }, emphasis: { focus: 'series' }, animationDelay: (k) => k * 40 })),
       }));
     });
     return h('div', { class: 'card chart-card rp-card' }, rpHead(s, s.kind === 'pie' ? 'cube' : s.unit === '¥' ? 'dollar' : 'chart'), h('div', { class: 'card-body chart-body' }, el));
@@ -3502,26 +3494,14 @@
     return echartsP;
   }
   ERR.chart_load_failed = '图表组件加载失败，请刷新页面';
-  // 多个系列要分得开时用的色板；第一个颜色总是当前的强调色（chartTheme 里换），和强调色太接近的那一个换成蓝色
-  const BASE_PALETTE = ['#3b82f6', '#8b5cf6', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#ec4899', '#6366f1', '#14b8a6', '#84cc16', '#f97316', '#a855f7', '#0ea5e9', '#94a3b8'];
-  const PALETTE = BASE_PALETTE.slice();
-  // 当前主题里画图用的颜色：强调色 accent（soft(a) 是它的半透明）、灰阶 strong / muted / faint / track / raised、语义色 ok / warn / bad。chartTheme() 每次都会更新
-  const CH = {};
-  const hexA = (hex, a) => { const m = /^#?([0-9a-f]{6})$/i.exec(String(hex).trim()); if (!m) return hex; const n = parseInt(m[1], 16); return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`; };
+  const PALETTE = ['#3b82f6', '#8b5cf6', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#ec4899', '#6366f1', '#14b8a6', '#84cc16', '#f97316', '#a855f7', '#0ea5e9', '#94a3b8'];
   const escHtml = (s) => String(s === null || s === undefined ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const reduceMotion = () => window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   function chartTheme() {
-    const root = document.documentElement, cs = getComputedStyle(root);
-    const dark = root.classList.contains('dark');
+    const cs = getComputedStyle(document.documentElement);
+    const dark = document.documentElement.classList.contains('dark');
     const v = (k, d) => cs.getPropertyValue(k).trim() || d;
-    const accent = v('--accent-ink', '#1d4ed8'), ac = root.dataset.accent || 'cobalt';
-    PALETTE.splice(0, PALETTE.length, ...BASE_PALETTE);
-    PALETTE[0] = accent;
-    if (ac === 'amber') PALETTE[4] = '#3b82f6';
-    if (ac === 'teal') PALETTE[8] = '#3b82f6';
-    return Object.assign(CH, { dark, text: v('--text-2', '#2e2e2e'), strong: v('--text', '#171717'), muted: v('--muted', '#5c5c5c'), faint: v('--faint', '#737373'),
-      border: v('--border', 'rgba(23,23,23,.08)'), tipBg: v('--surface', '#ffffff'), card: v('--surface', '#ffffff'), raised: v('--surface-2', '#f4f4f5'), track: v('--surface-3', '#e4e4e7'),
-      accent, soft: (a) => hexA(accent, a), ok: v('--ok-fill', '#16a34a'), warn: v('--warn-fill', '#d97706'), bad: v('--bad-fill', '#dc2626'), warnInk: v('--warn', '#b45309') });
+    return { dark, text: v('--text-2', '#334155'), strong: v('--text', '#0f172a'), muted: v('--muted', '#64748b'), border: dark ? 'rgba(148,163,184,.14)' : 'rgba(148,163,184,.28)', tipBg: dark ? 'rgba(15,23,42,.94)' : 'rgba(255,255,255,.97)', card: dark ? '#0f172a' : '#ffffff' };
   }
   const dotCls = (c) => { const x = typeof c === 'string' ? c : c && c.colorStops ? c.colorStops[0].color : ''; const i = PALETTE.indexOf(x); return i >= 0 ? 'cd' + i : 'cdx'; };
   function axisTip(fmt, { max = 12, total = null } = {}) {
@@ -3541,11 +3521,11 @@
   function baseOpt(t) {
     const anim = !reduceMotion();
     return {
-      animation: anim, animationDuration: 400, animationEasing: 'cubicOut', animationDurationUpdate: 300,
+      animation: anim, animationDuration: 1000, animationEasing: 'cubicOut', animationDurationUpdate: 500,
       textStyle: { fontFamily: getComputedStyle(document.body).fontFamily, color: t.text },
       grid: { left: 8, right: 14, top: 40, bottom: 6, containLabel: true },
       tooltip: { trigger: 'axis', confine: true, backgroundColor: t.tipBg, borderColor: t.border, borderWidth: 1, padding: [10, 12], textStyle: { color: t.text, fontSize: 12 },
-        extraCssText: 'border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.12);', axisPointer: { type: 'shadow', shadowStyle: { color: t.dark ? 'rgba(237,237,237,.05)' : 'rgba(23,23,23,.04)' } } },
+        extraCssText: 'border-radius:12px;box-shadow:0 10px 30px rgba(15,23,42,.18);', axisPointer: { type: 'shadow', shadowStyle: { color: t.dark ? 'rgba(148,163,184,.08)' : 'rgba(59,130,246,.06)' } } },
       legend: { type: 'scroll', top: 0, left: 0, right: 0, textStyle: { color: t.muted, fontSize: 11 }, icon: 'roundRect', itemWidth: 10, itemHeight: 10, itemGap: 12, pageIconColor: t.muted, pageIconInactiveColor: t.border, pageTextStyle: { color: t.muted } },
     };
   }
@@ -3554,7 +3534,7 @@
   const shortUsd = (v) => (Math.abs(v) >= 1000 ? '$' + (v / 1000).toFixed(v >= 10000 ? 0 : 1) + 'k' : '$' + Math.round(v));
   const shortCny = (v) => (Math.abs(v) >= 10000 ? '¥' + (v / 10000).toFixed(1) + '万' : '¥' + Math.round(v));
   function grad(e, c1, c2, horizontal) { return new e.graphic.LinearGradient(0, 0, horizontal ? 1 : 0, horizontal ? 0 : 1, [{ offset: 0, color: c1 }, { offset: 1, color: c2 }]); }
-  function countUp(el, to, fmt, ms = 400) {
+  function countUp(el, to, fmt, ms = 900) {
     if (reduceMotion() || !isFinite(to)) { el.textContent = fmt(to); return; }
     const t0 = performance.now();
     const step = (t) => { if (!el.isConnected && t - t0 > 50) return; const k = Math.min(1, (t - t0) / ms); el.textContent = fmt(to * (1 - Math.pow(1 - k, 3))); if (k < 1) requestAnimationFrame(step); };
@@ -3567,7 +3547,7 @@
   }
   function kpiCard(label, value, fmt, iconName, tone, { delta, sub, tip } = {}) {
     const v = h('div', { class: 'stat-value' });
-    const card = h('div', { class: 'card stat kpi', title: tip || '' },
+    const card = h('div', { class: 'card stat kpi', title: tip || '' }, h('div', { class: 'stat-icon si-' + tone }, icon(iconName)),
       h('div', { style: { minWidth: 0 } }, h('div', { class: 'stat-label', text: label }), v, h('div', { class: 'stat-sub' }, delta || null, sub ? h('span', { text: sub }) : null)));
     countUp(v, value, fmt);
     return card;
@@ -3621,7 +3601,7 @@
     const reloadBtn = h('button', { class: 'btn btn-secondary btn-sm btn-icon', type: 'button', title: '重新加载', 'aria-label': '重新加载' }, icon('refresh', 'icon icon-sm'));
     const info2 = h('div', { class: 'faint xs' });
     const bar = h('div', { class: 'card stats-bar' }, h('div', { class: 'stats-bar-in' }, seg,
-      h('div', { class: 'row wrap', style: { gap: '8px' } }, fIn, h('span', { class: 'faint', text: '→' }), tIn, reloadBtn)),
+      h('div', { class: 'row wrap', style: { gap: '6px' } }, fIn, h('span', { class: 'faint', text: '→' }), tIn, reloadBtn)),
       h('div', { class: 'row wrap stats-scope' }, h('span', { class: 'label', text: '统计范围' }), scopeSeg, ownerSel), info2);
     const body = h('div', { class: 'stats-body' }, h('div', { class: 'stats' }, skeletonStats(4)));
     append(main, bar, body);
@@ -3804,7 +3784,7 @@
             a.style.width = (x.member_cny / maxS) * 100 + '%'; b.style.width = (x.admin_cny / maxS) * 100 + '%';
             a.style.animationDelay = b.style.animationDelay = i * 60 + 'ms';
             return h('div', { class: 'srow' }, h('div', { class: 'srow-h' }, h('b', { text: uname(Number(uid)) }), h('span', { class: 'faint xs', text: `${x.count} 张 · 成员 ${cny(x.member_cny)} · 我 ${cny(x.admin_cny)}${x.recover_cny ? ` · 回本 ${cny(x.recover_cny)}` : ''}` })), h('div', { class: 'sbar' }, a, b));
-          })) : h('div', { class: 'muted small', style: { marginTop: '8px' }, text: '这段时间没有生成结算单' })));
+          })) : h('div', { class: 'muted small', style: { marginTop: '10px' }, text: '这段时间没有生成结算单' })));
       // 账号明细表
       const tableWrap = h('div', { class: 'table-wrap' });
       let acctAll = !isPhone();  // 手机上先只画前 8 个号
@@ -3820,7 +3800,7 @@
         clear(tableWrap, h('table', { class: 'table responsive acct-table' },
           h('thead', {}, h('tr', {}, COLS.map(([k, l]) => h('th', { class: k === 'spark' ? '' : 'sortable' + (sortKey === k ? ' sorted' : ''), onclick: k === 'spark' ? null : () => { if (sortKey === k) sortDir = -sortDir; else { sortKey = k; sortDir = typeof val(accs[0], k) === 'string' ? 1 : -1; } drawTable(); } }, l, sortKey === k ? (sortDir > 0 ? ' ↑' : ' ↓') : '')))),
           h('tbody', {}, rows.map((a) => { const inf = info[a.key] || {}; return h('tr', {},
-            h('td', { 'data-label': '' }, acctLabel(a.key, info, a.name), inf.seat ? h('span', { class: 'chip', style: { marginTop: '4px' }, text: SEAT_CN[inf.seat] + '席位' }) : null),
+            h('td', { 'data-label': '' }, acctLabel(a.key, info, a.name), inf.seat ? h('span', { class: 'chip', style: { marginTop: '3px' }, text: SEAT_CN[inf.seat] + '席位' }) : null),
             h('td', { 'data-label': '归属', class: 'small nowrap' }, [...a.owners].map(ownName).join('、')),
             h('td', { 'data-label': '额度', class: 'num money-strong', title: usd4(a.usd) }, usd(a.usd)),
             h('td', { 'data-label': '占比', class: 'num' }, h('div', { class: 'pct-cell' }, h('span', { text: T.usd ? ((a.usd / T.usd) * 100).toFixed(1) + '%' : '—' }), (() => { const i = h('i'); i.style.width = (T.usd ? (a.usd / T.usd) * 100 : 0) + '%'; return h('div', { class: 'pct-bar' }, i); })())),
@@ -3848,7 +3828,7 @@
         h('div', { class: 'table-wrap' }, h('table', { class: 'table matrix' },
           h('thead', {}, h('tr', {}, h('th', { class: 'sticky-col', text: '账号' }), h('th', { class: 'num', text: '合计' }), dayList.slice().reverse().map((d) => h('th', { class: 'num', text: d.slice(5) })))),
           h('tbody', {}, accs.map((a) => h('tr', {}, h('td', { class: 'sticky-col' }, acctLabel(a.key, info, a.name)), h('td', { class: 'num money-strong' }, usd(a.usd)),
-            dayList.map((d, i) => i).reverse().map((i) => { const v = a.by[i]; const td = h('td', { class: 'num heat' + (v ? '' : ' faint') }, v ? usd(v) : '—'); if (v) td.style.background = CH.soft(+(0.05 + 0.4 * (v / mx)).toFixed(3)); return td; })))))));
+            dayList.map((d, i) => i).reverse().map((i) => { const v = a.by[i]; const td = h('td', { class: 'num heat' + (v ? '' : ' faint') }, v ? usd(v) : '—'); if (v) td.style.background = `rgba(${t.dark ? '96,165,250' : '59,130,246'},${(0.06 + 0.5 * (v / mx)).toFixed(3)})`; return td; })))))));
       const grid = h('div', { class: 'chart-grid' }, h('div', { class: 'span-2' }, cmp.c), h('div', { class: 'span-2' }, trend.c), rank.c, pie.c, heat.c, model.c, reqc.c, settleCard);
       clear(body, kpis, grid, acctCard, matrix);
       [...kpis.children, ...grid.children, acctCard, matrix].forEach((el, i) => { el.classList.add('rise'); el.style.animationDelay = Math.min(i, 10) * 45 + 'ms'; });
@@ -3860,7 +3840,7 @@
         const hv = hrs.map((hh) => { const x = data.hourly.find((r) => r.day === dayList[0] && r.hour === hh); return x ? x.usd : 0; });
         ch1.setOption(Object.assign(baseOpt(t), { legend: { show: false }, tooltip: Object.assign(baseOpt(t).tooltip, { formatter: axisTip({ _: usd }) }),
           xAxis: axisX(t, hrs.map((x) => String(x).padStart(2, '0') + ':00')), yAxis: axisY(t, shortUsd),
-          series: [{ name: '额度', type: 'bar', data: hv, barMaxWidth: 26, itemStyle: { color: CH.accent, borderRadius: [4, 4, 0, 0] }, animationDelay: (i) => i * 30 }] }));
+          series: [{ name: '额度', type: 'bar', data: hv, barMaxWidth: 26, itemStyle: { color: grad(E, '#60a5fa', '#7c3aed'), borderRadius: [6, 6, 0, 0] }, animationDelay: (i) => i * 30 }] }));
       } else {
         let groups;
         if (trendMode === 'owner') {
@@ -3875,18 +3855,17 @@
         ch1.setOption(Object.assign(baseOpt(t), {
           tooltip: Object.assign(baseOpt(t).tooltip, { formatter: axisTip(fmt, { total: '额度合计' }) }),
           grid: { left: 8, right: 8, top: 44, bottom: dayList.length > 20 ? 40 : 6, containLabel: true },
-          dataZoom: dayList.length > 20 ? [{ type: 'slider', height: 18, bottom: 6, start: Math.max(0, 100 - (20 / dayList.length) * 100), end: 100, borderColor: t.border, textStyle: { color: t.muted }, fillerColor: CH.soft(.12), handleStyle: { color: CH.accent } }, { type: 'inside' }] : [],
+          dataZoom: dayList.length > 20 ? [{ type: 'slider', height: 18, bottom: 6, start: Math.max(0, 100 - (20 / dayList.length) * 100), end: 100, borderColor: t.border, textStyle: { color: t.muted }, fillerColor: 'rgba(99,102,241,.12)', handleStyle: { color: '#6366f1' } }, { type: 'inside' }] : [],
           xAxis: axisX(t, dayList.map((d) => d.slice(5))),
           yAxis: [axisY(t, shortUsd), axisY(t, shortCny, { splitLine: { show: false } })],
           series: [...groups.map((g, i) => ({ name: g.name, type: 'bar', stack: 'u', data: g.vals.map((v) => Math.round(v * 10000) / 10000), barMaxWidth: 34, emphasis: { focus: 'series' },
-            itemStyle: { color: g.name.startsWith('其他') ? CH.track : PALETTE[i % PALETTE.length], borderRadius: i === groups.length - 1 ? [4, 4, 0, 0] : 0 }, animationDelay: (idx) => idx * 28 + i * 40 })),
+            itemStyle: { color: PALETTE[i % PALETTE.length], borderRadius: i === groups.length - 1 ? [5, 5, 0, 0] : 0 }, animationDelay: (idx) => idx * 28 + i * 40 })),
           { name: '我的利润（估）', type: 'line', yAxisIndex: 1, smooth: dayList.length > 5 ? 0.35 : false, symbol: 'circle', symbolSize: 6, showSymbol: dayList.length <= 31, data: daily.map((D) => r2(D.my)),
-            lineStyle: { width: 2, color: CH.strong }, itemStyle: { color: CH.strong }, z: 5, animationDelay: 300 }],
+            lineStyle: { width: 2.5, color: '#10b981' }, itemStyle: { color: '#10b981' }, areaStyle: { color: grad(E, 'rgba(16,185,129,.22)', 'rgba(16,185,129,0)') }, z: 5, animationDelay: 300 }],
         }));
       }
       // ---- 同一时刻对比图
       if (refA) {
-        chartTheme();
         const ch0 = mkChart(cmp.el), hrMode = cmpMode === 'hour';
         const n = hrMode ? 24 : 144, unit = hrMode ? 6 : 1;
         const bucket = (a) => { const o = new Array(n).fill(0); a.forEach((v, i) => { o[Math.floor(i / unit)] += v * rate; }); return o; };
@@ -3909,9 +3888,9 @@
         };
         const back = (day) => Math.round((Date.parse(ID.ref) - Date.parse(day)) / 86400000);
         const items = [
-          { key: 'ref', name: refN, label: refN, color: CH.accent, def: true },
-          ydV ? { key: 'yd', name: ydName, label: ydName, color: CH.muted, dash: 'dashed', def: true } : null,
-          avgV ? { key: 'avg', name: avgName, label: avgName, color: CH.faint, dash: 'dotted', def: true } : null,
+          { key: 'ref', name: refN, label: refN, color: '#3b82f6', def: true },
+          ydV ? { key: 'yd', name: ydName, label: ydName, color: '#f59e0b', dash: 'dashed', def: true } : null,
+          avgV ? { key: 'avg', name: avgName, label: avgName, color: '#10b981', dash: 'dotted', def: true } : null,
           ...older.map((o, i) => ({ key: 'd' + back(o.day), name: o.day.slice(5), label: o.day.slice(5), color: DAY_COLORS[i % DAY_COLORS.length], def: false })),
         ].filter(Boolean);
         const selOf = () => Object.fromEntries(items.map((x) => [x.name, pk.isOn(x.key)]));
@@ -3929,11 +3908,11 @@
           xAxis: axisX(t, labels, hrMode ? {} : { boundaryGap: false, axisLabel: { color: t.muted, fontSize: 11, interval: 17 } }),
           yAxis: axisY(t, shortCny),
           series: [
-            hrMode ? { name: refN, type: 'bar', data: refV, barMaxWidth: 18, itemStyle: { color: CH.accent, borderRadius: [4, 4, 0, 0] }, z: 3 }
-              : { name: refN, type: 'line', data: refV, showSymbol: false, lineStyle: { width: 2.5, color: CH.accent }, itemStyle: { color: CH.accent }, areaStyle: { color: grad(E, CH.soft(.12), CH.soft(0)) }, z: 4,
+            hrMode ? { name: refN, type: 'bar', data: refV, barMaxWidth: 18, itemStyle: { color: grad(E, '#60a5fa', '#7c3aed'), borderRadius: [5, 5, 0, 0] }, z: 3 }
+              : { name: refN, type: 'line', data: refV, showSymbol: false, lineStyle: { width: 3, color: '#3b82f6' }, itemStyle: { color: '#3b82f6' }, areaStyle: { color: grad(E, 'rgba(59,130,246,.20)', 'rgba(59,130,246,0)') }, z: 4,
                 markLine: ID.asof ? { symbol: 'none', silent: true, label: { formatter: '到 ' + atLbl, color: t.muted, fontSize: 11 }, lineStyle: { color: t.muted, type: 'dashed' }, data: [{ xAxis: Math.max(0, cut - 1) }] } : undefined },
-            ydV ? { name: ydName, type: 'line', data: ydV, showSymbol: false, smooth: hrMode ? 0.3 : false, lineStyle: { width: 2, type: 'dashed', color: CH.muted }, itemStyle: { color: CH.muted }, z: 3 } : null,
-            avgV ? { name: avgName, type: 'line', data: avgV, showSymbol: false, smooth: hrMode ? 0.3 : false, lineStyle: { width: 2, type: 'dotted', color: CH.faint }, itemStyle: { color: CH.faint }, z: 3 } : null,
+            ydV ? { name: ydName, type: 'line', data: ydV, showSymbol: false, smooth: hrMode ? 0.3 : false, lineStyle: { width: 2, type: 'dashed', color: '#f59e0b' }, itemStyle: { color: '#f59e0b' }, z: 3 } : null,
+            avgV ? { name: avgName, type: 'line', data: avgV, showSymbol: false, smooth: hrMode ? 0.3 : false, lineStyle: { width: 2, type: 'dotted', color: '#10b981' }, itemStyle: { color: '#10b981' }, z: 3 } : null,
             ...older.map((o, i) => ({ name: o.day.slice(5), type: 'line', data: o.v, showSymbol: false, smooth: hrMode ? 0.3 : false, lineStyle: { width: 1.4, opacity: 0.85, color: DAY_COLORS[i % DAY_COLORS.length] }, itemStyle: { color: DAY_COLORS[i % DAY_COLORS.length] }, z: 2 })),
           ].filter(Boolean),
         }));
@@ -3945,21 +3924,21 @@
       ch2.setOption(Object.assign(baseOpt(t), { legend: { show: false }, grid: { left: 8, right: 110, top: 6, bottom: 6, containLabel: true },
         tooltip: Object.assign(baseOpt(t).tooltip, { trigger: 'item', formatter: (p) => { const a = topN[p.dataIndex]; return `<div class="ct-title">${escHtml(a.name)}</div><div class="ct-row"><span>额度</span><b>${usd(a.usd)}</b></div><div class="ct-row"><span>产出</span><b>${cny(a.usd * rate)}</b></div><div class="ct-row"><span>我的利润（估）</span><b>${cny(a.my)}</b></div><div class="ct-row"><span>占比</span><b>${T.usd ? ((a.usd / T.usd) * 100).toFixed(1) : 0}%</b></div>`; } }),
         xAxis: axisY(t, shortUsd), yAxis: axisX(t, topN.map((a) => a.name), { inverse: true, axisLabel: { color: t.text, fontSize: 12, fontWeight: 600 } }),
-        series: [{ type: 'bar', data: topN.map((a, i) => ({ value: Math.round(a.usd * 100) / 100, itemStyle: { color: i === 0 ? CH.accent : CH.track, borderRadius: [0, 4, 4, 0] } })), barMaxWidth: 18,
-          label: { show: true, position: 'right', color: t.muted, fontSize: 11, formatter: (p) => `${shortUsd(p.value)} · ${shortCny(topN[p.dataIndex].my)}` }, animationDelay: (i) => i * 60, showBackground: true, backgroundStyle: { color: CH.raised, borderRadius: [0, 4, 4, 0] } }] }));
+        series: [{ type: 'bar', data: topN.map((a, i) => ({ value: Math.round(a.usd * 100) / 100, itemStyle: { color: grad(E, PALETTE[i % 8], PALETTE[(i + 1) % 8], true), borderRadius: [0, 6, 6, 0] } })), barMaxWidth: 18,
+          label: { show: true, position: 'right', color: t.muted, fontSize: 11, formatter: (p) => `${shortUsd(p.value)} · ${shortCny(topN[p.dataIndex].my)}` }, animationDelay: (i) => i * 60, showBackground: true, backgroundStyle: { color: t.dark ? 'rgba(148,163,184,.06)' : 'rgba(148,163,184,.08)', borderRadius: [0, 6, 6, 0] } }] }));
       // ---- 占比
       let slices;
       if (pieMode === 'owner') slices = Object.entries(ownerUsd).sort((a, b) => b[1] - a[1]).map(([k, v]) => ({ name: ownName(k), value: v }));
       else if (pieMode === 'model') slices = [{ name: 'Opus', value: T.opus }, { name: 'Fable', value: T.fable }, { name: '其他模型', value: Math.max(0, T.usd - T.opus - T.fable) }].filter((x) => x.value > 0);
       else { slices = accs.slice(0, 9).map((a) => ({ name: a.name, value: a.usd })); const rest = accs.slice(9).reduce((s, a) => s + a.usd, 0); if (rest > 0) slices.push({ name: '其他', value: rest }); }
-      slices = slices.map((x, i) => ({ name: x.name, value: Math.round(x.value * 100) / 100, itemStyle: { color: /^其他/.test(x.name) ? CH.track : PALETTE[i % PALETTE.length] } }));
+      slices = slices.map((x, i) => ({ name: x.name, value: Math.round(x.value * 100) / 100, itemStyle: { color: PALETTE[i % PALETTE.length] } }));
       const ch3 = mkChart(pie.el);
       ch3.setOption(Object.assign(baseOpt(t), {
         legend: Object.assign(baseOpt(t).legend, { top: 'auto', bottom: 0 }),
         tooltip: Object.assign(baseOpt(t).tooltip, { trigger: 'item', formatter: (p) => `<div class="ct-title">${escHtml(p.name)}</div><div class="ct-row"><i class="ct-dot ${dotCls(p.color)}"></i><span>额度</span><b>${usd(p.value)}</b></div><div class="ct-row"><span>占比</span><b>${p.percent}%</b></div><div class="ct-row"><span>产出</span><b>${cny(p.value * rate)}</b></div>` }),
-        title: { text: shortUsd(T.usd), subtext: '总额度', left: 'center', top: '36%', textStyle: { color: t.strong, fontSize: 20, fontWeight: 600 }, subtextStyle: { color: t.muted, fontSize: 11 } },
-        series: [{ type: 'pie', radius: ['50%', '74%'], center: ['50%', '45%'], avoidLabelOverlap: true, padAngle: 2, itemStyle: { borderRadius: 2, borderColor: t.card, borderWidth: 2 },
-          label: { show: false }, emphasis: { scale: true, scaleSize: 8, label: { show: false } }, data: slices, animationType: 'expansion', animationEasing: 'cubicOut', animationDuration: 400 }],
+        title: { text: shortUsd(T.usd), subtext: '总额度', left: 'center', top: '36%', textStyle: { color: t.strong, fontSize: 20, fontWeight: 750 }, subtextStyle: { color: t.muted, fontSize: 11 } },
+        series: [{ type: 'pie', radius: ['50%', '74%'], center: ['50%', '45%'], avoidLabelOverlap: true, padAngle: 2, itemStyle: { borderRadius: 8, borderColor: t.card, borderWidth: 2 },
+          label: { show: false }, emphasis: { scale: true, scaleSize: 8, label: { show: false } }, data: slices, animationType: 'expansion', animationEasing: 'cubicOut', animationDuration: 1100 }],
       }));
       // ---- 24 小时热力图
       const hdays = dayList.filter((d) => data.hourly.some((r) => r.day === d));
@@ -3972,20 +3951,20 @@
           tooltip: Object.assign(baseOpt(t).tooltip, { trigger: 'item', formatter: (p) => `<div class="ct-title">${escHtml(hdays[p.value[1]])} ${String(p.value[0]).padStart(2, '0')}:00</div><div class="ct-row"><span>额度</span><b>${usd(p.value[2])}</b></div>` }),
           xAxis: axisX(t, Array.from({ length: 24 }, (_, i) => String(i)), { splitArea: { show: false } }), yAxis: axisX(t, hdays.map((d) => d.slice(5)), { inverse: true }),
           visualMap: { min: 0, max: vmax, calculable: false, orient: 'horizontal', left: 'center', bottom: 0, itemHeight: 140, itemWidth: 10, textStyle: { color: t.muted, fontSize: 10 }, formatter: (v) => shortUsd(v),
-            inRange: { color: [CH.raised, CH.soft(.45), CH.accent] } },
-          series: [{ type: 'heatmap', data: vals, itemStyle: { borderRadius: 2, borderColor: t.card, borderWidth: 1 }, emphasis: { itemStyle: { borderColor: CH.strong, borderWidth: 1 } }, animationDuration: 800 }] }));
+            inRange: { color: t.dark ? ['#1e293b', '#1e40af', '#6366f1', '#a855f7'] : ['#eff6ff', '#93c5fd', '#3b82f6', '#6d28d9'] } },
+          series: [{ type: 'heatmap', data: vals, itemStyle: { borderRadius: 3, borderColor: t.card, borderWidth: 1 }, emphasis: { itemStyle: { shadowBlur: 8, shadowColor: 'rgba(0,0,0,.25)' } }, animationDuration: 800 }] }));
       } else ch4.setOption({ title: { text: '这段时间还没有按小时的数据（后台正在补算）', left: 'center', top: 'middle', textStyle: { color: t.muted, fontSize: 12, fontWeight: 400 } } });
       // ---- 模型额度
       const ch5 = mkChart(model.el);
-      const mk = (name, vals, c) => ({ name, type: 'line', stack: 'm', smooth: dayList.length > 5 ? 0.35 : false, symbol: 'none', data: vals.map((v) => Math.round(v * 100) / 100), lineStyle: { width: 1.5, color: c }, itemStyle: { color: c }, areaStyle: { color: c, opacity: .55 }, emphasis: { focus: 'series' } });
+      const mk = (name, vals, c) => ({ name, type: 'line', stack: 'm', smooth: dayList.length > 5 ? 0.35 : false, symbol: 'none', data: vals.map((v) => Math.round(v * 100) / 100), lineStyle: { width: 1.5, color: c }, itemStyle: { color: c }, areaStyle: { color: grad(E, c + 'cc', c + '22') }, emphasis: { focus: 'series' } });
       ch5.setOption(Object.assign(baseOpt(t), { tooltip: Object.assign(baseOpt(t).tooltip, { axisPointer: { type: 'line', lineStyle: { color: t.border } }, formatter: axisTip({ _: usd }) }),
         xAxis: axisX(t, single ? [dayList[0].slice(5)] : dayList.map((d) => d.slice(5)), { boundaryGap: false }), yAxis: axisY(t, shortUsd),
-        series: [mk('Opus', daily.map((D) => D.opus), PALETTE[0]), mk('Fable', daily.map((D) => D.fable), CH.muted), mk('其他模型', daily.map((D) => Math.max(0, D.usd - D.opus - D.fable)), CH.track)] }));
+        series: [mk('Opus', daily.map((D) => D.opus), PALETTE[1]), mk('Fable', daily.map((D) => D.fable), PALETTE[2]), mk('其他模型', daily.map((D) => Math.max(0, D.usd - D.opus - D.fable)), PALETTE[13])] }));
       // ---- 请求与 Token
       const ch6 = mkChart(reqc.el);
       ch6.setOption(Object.assign(baseOpt(t), { tooltip: Object.assign(baseOpt(t).tooltip, { formatter: axisTip({ _: (v) => compact(Math.round(v)) }) }),
         xAxis: axisX(t, dayList.map((d) => d.slice(5))), yAxis: [axisY(t, (v) => compact(v)), axisY(t, (v) => compact(v), { splitLine: { show: false } })],
-        series: [{ name: '请求', type: 'bar', data: daily.map((D) => D.req), barMaxWidth: 22, itemStyle: { color: CH.faint, borderRadius: [4, 4, 0, 0] }, animationDelay: (i) => i * 25 },
+        series: [{ name: '请求', type: 'bar', data: daily.map((D) => D.req), barMaxWidth: 22, itemStyle: { color: grad(E, '#38bdf8', '#3b82f6'), borderRadius: [5, 5, 0, 0] }, animationDelay: (i) => i * 25 },
           { name: 'Token', type: 'line', yAxisIndex: 1, smooth: dayList.length > 5 ? 0.35 : false, symbol: 'none', data: daily.map((D) => D.tok), lineStyle: { width: 2.5, color: PALETTE[6] }, itemStyle: { color: PALETTE[6] } }] }));
     }
     load();
@@ -3994,7 +3973,7 @@
   function mkChart(el) { const c = window.echarts.init(el, null, { renderer: 'canvas', devicePixelRatio: Math.min(window.devicePixelRatio || 1, isPhone() ? 2 : 3) }); S.charts.push(c); return c; }
   function disposeCharts() { (S.charts || []).forEach((c) => { try { c.dispose(); } catch { /* ignore */ } }); S.charts = []; }
   window.addEventListener('resize', () => { clearTimeout(S.resizeT); S.resizeT = setTimeout(() => (S.charts || []).forEach((c) => c.resize()), 120); });
-  new MutationObserver(() => { chartTheme(); if (S.onTheme) setTimeout(() => S.onTheme && S.onTheme(), 30); }).observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'data-accent'] });
+  new MutationObserver(() => { if (S.onTheme) setTimeout(() => S.onTheme && S.onTheme(), 30); }).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
 
   // ============================================================
   // 管理：账号选择器
@@ -4040,7 +4019,7 @@
     q.input.addEventListener('input', draw);
     draw();
     const el = h('div', {},
-      h('div', { class: 'row wrap', style: { marginBottom: '8px' } }, h('div', { class: 'grow', style: { minWidth: '160px' } }, q.wrap),
+      h('div', { class: 'row wrap', style: { marginBottom: '10px' } }, h('div', { class: 'grow', style: { minWidth: '160px' } }, q.wrap),
         h('button', { class: 'btn btn-secondary btn-sm', type: 'button', onclick: () => { keys.forEach((k) => sel.add(k)); draw(); } }, '全选'),
         h('button', { class: 'btn btn-secondary btn-sm', type: 'button', onclick: () => { sel.clear(); draw(); } }, '清空'), count),
       grid,
@@ -4148,7 +4127,7 @@
             more);
         return h('tr', {},
           h('td', { 'data-label': '' }, h('div', { class: 'row' }, h('span', { class: 'avatar', text: nameOf(u).slice(0, 1) }),
-            h('div', {}, h('div', { class: 'row', style: { gap: '8px' } }, h('div', { class: 'cell-title', text: nameOf(u) }),
+            h('div', {}, h('div', { class: 'row', style: { gap: '6px' } }, h('div', { class: 'cell-title', text: nameOf(u) }),
               h('button', { class: 'btn btn-ghost btn-xs nick-btn', type: 'button', title: '修改备注昵称', onclick: () => editNickname(u) }, u.nickname ? '改备注' : '+ 备注')),
               u.nickname ? h('div', { class: 'cell-sub mono', text: u.username }) : null,
               h('div', { class: 'row', style: { gap: '4px', marginTop: '2px' } },
@@ -4199,7 +4178,7 @@
           h('p', { class: 'muted', style: { marginTop: 0 }, text: '邀请码只显示这一次，请现在复制并发给对方。' }),
           h('div', { class: 'secret-box' }, h('code', { class: 'mono', text: code }),
             h('button', { class: 'btn btn-secondary btn-sm', type: 'button', onclick: () => copy(code, '邀请码') }, icon('copy', 'icon icon-sm'), '复制')),
-          h('div', { class: 'field', style: { marginTop: '12px', marginBottom: 0 } }, h('label', { class: 'label', text: '注册链接（自动填好邀请码）' }),
+          h('div', { class: 'field', style: { marginTop: '14px', marginBottom: 0 } }, h('label', { class: 'label', text: '注册链接（自动填好邀请码）' }),
             h('div', { class: 'row' }, h('input', { class: 'input input-sm mono', readOnly: true, value: link }),
               h('button', { class: 'btn btn-secondary btn-sm', type: 'button', onclick: () => copy(link, '注册链接') }, icon('link', 'icon icon-sm'), '复制')))),
         actions: [{ label: '完成', kind: 'btn-primary' }],
@@ -4371,13 +4350,13 @@
     const info = h('div', { class: 'card' },
       h('div', { class: 'card-head' }, h('h2', { class: 'card-title' }, icon('user'), '账号信息')),
       h('div', { class: 'card-body' },
-        h('div', { class: 'row', style: { gap: '12px', marginBottom: '16px' } }, h('span', { class: 'avatar lg', text: S.user.username.slice(0, 1) }),
+        h('div', { class: 'row', style: { gap: '14px', marginBottom: '16px' } }, h('span', { class: 'avatar lg', text: S.user.username.slice(0, 1) }),
           h('div', {}, h('div', { class: 'cell-title', style: { fontSize: '18px' }, text: S.user.username }),
             isAdmin() ? h('span', { class: 'badge b-purple', text: '管理员' }) : h('span', { class: 'badge b-gray', text: '普通用户' }))),
         h('dl', { class: 'kv', style: { fontSize: '13px', gap: '8px 16px' } },
           h('dt', { text: '可见范围' }), h('dd', { text: isAdmin() ? '全部账号与运维数据' : '管理员分配的账号' }),
           h('dt', { text: '登录有效期' }), h('dd', { text: '12 小时' })),
-        h('button', { class: 'btn btn-secondary btn-sm', type: 'button', style: { marginTop: '16px' }, onclick: logout }, icon('logout', 'icon icon-sm'), '退出登录')));
+        h('button', { class: 'btn btn-secondary btn-sm', type: 'button', style: { marginTop: '18px' }, onclick: logout }, icon('logout', 'icon icon-sm'), '退出登录')));
     append(main,
       forced ? h('div', { class: 'notice n-warn' }, icon('lock'), h('span', { text: '为了账号安全，请先把初始密码或临时密码改成你自己的密码，然后才能使用其他功能。' })) : null,
       h('div', { class: 'grid-2' }, info,
@@ -4389,9 +4368,10 @@
   // 启动
   // ============================================================
   applyTheme();
+  try { localStorage.removeItem('polo_accent'); } catch { /* ignore */ }  // v62 试过的强调色设置，已撤回
   loadSession();
   window.addEventListener('storage', (e) => {
-    if (e.key === 'polo_theme' || e.key === 'polo_accent') return applyTheme();
+    if (e.key === 'polo_theme') return applyTheme();
     if (e.key !== SESSION_KEY || S.store !== localStorage || !S.token) return;
     let cur = null;
     try { cur = JSON.parse(e.newValue || 'null'); } catch { cur = null; }

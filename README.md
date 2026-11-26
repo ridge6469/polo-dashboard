@@ -5,12 +5,6 @@ Polo 后台账号用量看板。网页放在 GitHub Pages，数据在你自己�
 - 看板地址：https://ridge6469.github.io/polo-dashboard/
 - 网页代码：`docs/`（纯静态 HTML/JS；统计看板的图表库 ECharts 放在 `docs/vendor/`，没有其他第三方依赖）
 
-## 界面
-
-灰阶界面加一种强调色，颜色只留给额度条、曲线图和语义（正常 / 警告 / 异常）。右上角的太阳 / 月亮按钮里可以换浅色、深色，以及强调色（钴蓝、琥珀、青绿），选择记在当前设备上。
-
-界面改版依据 [unslop](https://github.com/heydamir/unslop)（Damir Sokolovsky @heydamir，CC BY 4.0）。
-
 ## 数据从哪来
 
 ```
