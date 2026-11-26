@@ -1240,10 +1240,11 @@
   // 前几天逐日的颜色：和今天（蓝 / 紫）、昨天（橙）、近几天平均（绿）都分得开
   const DAY_COLORS = ['#ef4444', '#06b6d4', '#ec4899', '#84cc16', '#64748b', '#a0522d', '#0f766e'];
   // 对照图的线：一样粗、都是实线，只靠颜色分；前后都没数据的单个点画个小圆点（不然看不见）
-  const LINE_W = 2;
+  const LINE_W = 2, FADE = 0.45;  // FADE：对照线（不是今天的）的不透明度
   const solo = (arr) => arr.map((v, i) => (v !== null && v !== undefined && (arr[i - 1] === null || arr[i - 1] === undefined) && (arr[i + 1] === null || arr[i + 1] === undefined)
     ? { value: v, symbol: 'circle', symbolSize: 4 } : v));
-  const flatLine = (name, data, color, extra) => Object.assign({ name, type: 'line', symbol: 'none', connectNulls: false, data: solo(data), lineStyle: { width: LINE_W, color }, itemStyle: { color } }, extra || {});
+  const flatLine = (name, data, color, extra, fade) => Object.assign({ name, type: 'line', symbol: 'none', connectNulls: false, data: solo(data),
+    lineStyle: { width: LINE_W, color, opacity: fade ? FADE : 1 }, itemStyle: { color, opacity: fade ? FADE : 1 } }, extra || {});
   function linePicker(storeKey, items, onChange) {
     let saved = {};
     try { saved = JSON.parse(localStorage.getItem(storeKey) || '{}') || {}; } catch { saved = {}; }
@@ -1338,9 +1339,9 @@
         series: [
           flatLine('平均并发', bins.map((r) => (r ? r.avg : null)), PALETTE[0], { z: 5 }),
           flatLine('采样峰值', bins.map((r) => (r ? r.peak : null)), PALETTE[1], { z: 4 }),
-          yd ? flatLine(ydName, yd.avg, '#f59e0b', { z: 3 }) : null,
-          avgN ? flatLine(avgName, avgN, '#10b981', { z: 3 }) : null,
-          ...older.map((x, k) => flatLine(olderName(x), x.avg, DAY_COLORS[k % DAY_COLORS.length], { z: 2 })),
+          yd ? flatLine(ydName, yd.avg, '#f59e0b', { z: 3 }, true) : null,
+          avgN ? flatLine(avgName, avgN, '#10b981', { z: 3 }, true) : null,
+          ...older.map((x, k) => flatLine(olderName(x), x.avg, DAY_COLORS[k % DAY_COLORS.length], { z: 2 }, true)),
         ].filter(Boolean) }, true);
     }
     function select(day) {
@@ -3938,9 +3939,9 @@
             hrMode ? { name: refN, type: 'bar', data: refV, barMaxWidth: 18, itemStyle: { color: grad(E, '#60a5fa', '#7c3aed'), borderRadius: [5, 5, 0, 0] }, z: 3 }
               : { name: refN, type: 'line', data: refV, showSymbol: false, lineStyle: { width: LINE_W, color: '#3b82f6' }, itemStyle: { color: '#3b82f6' }, areaStyle: { color: grad(E, 'rgba(59,130,246,.20)', 'rgba(59,130,246,0)') }, z: 4,
                 markLine: ID.asof ? { symbol: 'none', silent: true, label: { formatter: '到 ' + atLbl, color: t.muted, fontSize: 11 }, lineStyle: { color: t.muted, type: 'dashed' }, data: [{ xAxis: Math.max(0, cut - 1) }] } : undefined },
-            ydV ? { name: ydName, type: 'line', data: ydV, showSymbol: false, smooth: hrMode ? 0.3 : false, lineStyle: { width: LINE_W, color: '#f59e0b' }, itemStyle: { color: '#f59e0b' }, z: 3 } : null,
-            avgV ? { name: avgName, type: 'line', data: avgV, showSymbol: false, smooth: hrMode ? 0.3 : false, lineStyle: { width: LINE_W, color: '#10b981' }, itemStyle: { color: '#10b981' }, z: 3 } : null,
-            ...older.map((o, i) => ({ name: o.day.slice(5), type: 'line', data: o.v, showSymbol: false, smooth: hrMode ? 0.3 : false, lineStyle: { width: LINE_W, color: DAY_COLORS[i % DAY_COLORS.length] }, itemStyle: { color: DAY_COLORS[i % DAY_COLORS.length] }, z: 2 })),
+            ydV ? { name: ydName, type: 'line', data: ydV, showSymbol: false, smooth: hrMode ? 0.3 : false, lineStyle: { width: LINE_W, color: '#f59e0b', opacity: FADE }, itemStyle: { color: '#f59e0b' }, z: 3 } : null,
+            avgV ? { name: avgName, type: 'line', data: avgV, showSymbol: false, smooth: hrMode ? 0.3 : false, lineStyle: { width: LINE_W, color: '#10b981', opacity: FADE }, itemStyle: { color: '#10b981' }, z: 3 } : null,
+            ...older.map((o, i) => ({ name: o.day.slice(5), type: 'line', data: o.v, showSymbol: false, smooth: hrMode ? 0.3 : false, lineStyle: { width: LINE_W, color: DAY_COLORS[i % DAY_COLORS.length], opacity: FADE }, itemStyle: { color: DAY_COLORS[i % DAY_COLORS.length] }, z: 2 })),
           ].filter(Boolean),
         }));
       }
