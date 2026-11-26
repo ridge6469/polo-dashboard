@@ -4419,24 +4419,32 @@
   });
   window.addEventListener('hashchange', render);
   render();
-  // 发布了新版：每 5 分钟看一眼 index.html 里的版本号，变了就在用户没在操作时自动刷新整个页面（10 分钟内最多一次）
+  // 发布了新版：每 5 分钟（切回这个标签页时马上）看一眼 index.html 里的版本号，变了就换新版：
+  // 用户切换页面时直接换；否则等没在操作时自动刷新。10 分钟内最多自动刷新一次（防止缓存没过期时反复刷），挡住了就到点再试
   if (APP_V) {
-    let want = null;
-    const reloadWhenIdle = () => {
-      if (userBusy(false) && !document.hidden) return setTimeout(reloadWhenIdle, 10000);
-      const last = Number(sessionStorage.getItem('polo_vreload') || 0);
-      if (Date.now() - last < 600000) return;
+    let want = null, timer = null, checkedAt = 0;
+    const reloadNow = (force) => {
+      const last = Number(sessionStorage.getItem('polo_vreload') || 0), wait = 600000 - (Date.now() - last);
+      if (wait > 0) { clearTimeout(timer); timer = setTimeout(reloadWhenIdle, wait + 1000); return false; }
+      if (!force && userBusy(false) && !document.hidden) return false;
       sessionStorage.setItem('polo_vreload', String(Date.now()));
       location.reload();
+      return true;
     };
-    setInterval(async () => {
-      if (want) return;
+    function reloadWhenIdle() { if (!reloadNow(false)) { clearTimeout(timer); timer = setTimeout(reloadWhenIdle, 10000); } }
+    const check = async () => {
+      if (want || Date.now() - checkedAt < 60000) return;
+      checkedAt = Date.now();
       try {
         const html = await (await fetch(location.pathname + '?vc=' + Date.now(), { cache: 'no-store' })).text();
         const v = (html.match(/app\.js\?v=(\d+)/) || [])[1];
         if (v && Number(v) > Number(APP_V)) { want = v; reloadWhenIdle(); }
       } catch { /* 下次再看 */ }
-    }, 300000);
+    };
+    setInterval(check, 300000);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) check(); });
+    // 切换页面：有新版就直接换（新页面本来就要重画）；没发现新版也顺便看一眼
+    window.addEventListener('hashchange', () => { if (want) reloadNow(true); else check(); });
   }
   if (S.token) {
     api('GET', '/me').then((me) => {
