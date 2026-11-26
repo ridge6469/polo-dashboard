@@ -1182,3 +1182,6 @@ tr:hover .nick-btn { opacity: 1; }
   .mini-table.charges th:nth-child(4), .mini-table.charges td:nth-child(4) { display: none; }
   .mini-table.charges td:last-child > .row { margin-top: -6px; }
 }
+/* 统计卡片数字下面的副数字（例如上家收益折合人民币） */
+.stat-alt { font-size: 14px; font-weight: 650; color: var(--text-2); margin-top: 1px; font-variant-numeric: tabular-nums; cursor: help; }
+.yd-amt span.yd-cny { font-weight: 650; color: var(--text-2); cursor: help; }
