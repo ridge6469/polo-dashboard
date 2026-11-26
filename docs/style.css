@@ -395,7 +395,7 @@ html.dark .q-note { color: #fdba74; }
 .q-foot { grid-column: 1 / -1; display: flex; align-items: center; gap: 4px; font-size: 11.5px; color: var(--muted); margin-top: 2px; }
 /* 消耗 */
 .cost { display: grid; gap: 6px; min-width: 175px; }
-.cost-row { display: grid; grid-template-columns: 32px 1fr auto; gap: 8px; align-items: center; font-size: 12px; white-space: nowrap; }
+.cost-row { display: grid; grid-template-columns: max-content 1fr auto; gap: 6px; align-items: center; font-size: 12px; white-space: nowrap; }
 .cost-row .mono:nth-child(2) { text-align: right; color: var(--text-2); font-weight: 600; }
 .cost-row .faint { min-width: 66px; text-align: right; }
 .cost-row.strong .q-k, .cost-row.strong .mono:nth-child(2) { color: var(--text); font-weight: 750; }
@@ -961,7 +961,7 @@ tr:hover .nick-btn { opacity: 1; }
 .qw-kpis { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
 .qw-kpi { display: flex; flex-direction: column; gap: 3px; padding: 10px 12px; border-radius: 12px; background: var(--surface-2); border: 1px solid var(--border); min-width: 0; }
 .qw-kpi b { font-size: 17px; font-weight: 750; font-variant-numeric: tabular-nums; color: var(--text); }
-.qw-table td.num, .qw-table th:nth-child(n+2):not(:nth-child(6)):not(:nth-child(8)) { text-align: right; }
+.qw-table td.num, .qw-table th:nth-child(n+2):not(:nth-child(6)):not(:nth-child(9)) { text-align: right; }
 .qw-table tr.qw-live td { background: rgba(59, 130, 246, .035); }
 @media (max-width: 1100px) { .qw-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (max-width: 760px) {
@@ -1135,4 +1135,52 @@ tr:hover .nick-btn { opacity: 1; }
   .table.responsive.logs td[data-label="事件"] { order: 2; grid-column: auto; justify-content: flex-end; }
   .table.responsive.logs td[data-label="用户"] { order: 3; }
   .table.responsive.logs td[data-label="IP"] { order: 4; justify-content: flex-end; color: var(--faint); }
+}
+
+/* ---------- 复查修正：对齐与排版 ---------- */
+/* 总池并发「近七天对照」：两边边距和卡片标题对齐，日期是文字链接 */
+.mini-table.flush th, .mini-table.flush td { padding-top: 10px; padding-bottom: 10px; }
+.mini-table.flush th:first-child, .mini-table.flush td:first-child { padding-left: 20px; }
+.mini-table.flush th:last-child, .mini-table.flush td:last-child { padding-right: 20px; }
+.day-table th { white-space: nowrap; }
+.day-table tr.on td { background: var(--surface-2); }
+.day-link { background: none; border: 0; padding: 0; margin: 0; font: inherit; font-weight: 600; color: var(--text); cursor: pointer; }
+.day-link:hover { color: var(--primary-text); text-decoration: underline; }
+.day-table tr.on .day-link { color: var(--primary-text); }
+@media (max-width: 760px) {
+  .mini-table.flush th:first-child, .mini-table.flush td:first-child { padding-left: 14px; }
+  .mini-table.flush th:last-child, .mini-table.flush td:last-child { padding-right: 14px; }
+}
+/* 上家结算「未结算」明细：「归属区间」是文字，表头靠左 */
+.split-table th.c-range { text-align: left; }
+/* 统计看板账号明细「占比」：和表头一样靠左 */
+.pct-cell { align-items: flex-start; }
+/* 宽屏表格里，下拉框、行末的「⋯」和同一行第一行文字对齐 */
+@media (min-width: 761px) {
+  .table td.wide > .select-sm:first-child { margin-top: -7px; }
+  .l-act .icon-btn { margin-top: -5px; }
+  .table td[data-label="操作"] > .row:first-child { margin-top: -4px; }
+  .table td[data-label="进度"] > :first-child { margin-top: 6px; }
+}
+/* 统计看板账号明细：12 列，1440 宽的屏幕上原来差 70px 放不下、最右边的走势被裁掉 */
+@media (min-width: 761px) {
+  .acct-table th, .acct-table td { padding-left: 10px; padding-right: 10px; }
+  .acct-table .spark { width: 80px; }
+}
+/* 一排正好 5 张卡片：宽屏一行 5 张；窄一点 3 + 2；两列时最后单出来的那张占满一行 */
+.stats.n5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+@media (max-width: 1280px) { .stats.n5 { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 1024px) {
+  .stats.n5 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .stats:not(.kpis) > :last-child:nth-child(odd) { grid-column: 1 / -1; }
+}
+@media (max-width: 760px) { .stats > :last-child:nth-child(odd) { grid-column: 1 / -1; } }
+/* 成本记录：手机上日期去年份、席位并到类型下面，操作按钮不再被挤出屏幕 */
+.d-short, .seat-m { display: none; }
+@media (max-width: 760px) {
+  .mini-table.charges .d-full { display: none; }
+  .mini-table.charges .d-short { display: inline; }
+  .mini-table.charges .seat-m { display: block; }
+  .mini-table.charges th:nth-child(4), .mini-table.charges td:nth-child(4) { display: none; }
+  .mini-table.charges td:last-child > .row { margin-top: -6px; }
 }

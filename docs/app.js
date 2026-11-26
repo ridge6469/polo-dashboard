@@ -99,7 +99,9 @@
   // ============================================================
   // 格式化
   // ============================================================
-  const dash = (v) => (v === null || v === undefined || v === '' ? '—' : String(v));
+  // Polo 页面上的金额不带千分位（$2877.72）：和其他页面统一成 $2,877.72（小数位数不变）
+  const groupMoney = (v) => (typeof v === 'string' && /^[$¥]\d{4,}(\.\d+)?$/.test(v) ? v[0] + Number(v.slice(1)).toLocaleString('en-US', { minimumFractionDigits: (v.split('.')[1] || '').length, maximumFractionDigits: (v.split('.')[1] || '').length }) : v);
+  const dash = (v) => (v === null || v === undefined || v === '' ? '—' : groupMoney(String(v)));
   const toNum = (s) => {
     if (s === null || s === undefined) return null;
     if (typeof s === 'number') return s;
@@ -618,8 +620,6 @@
   function howTo(title, ...content) {
     return h('details', { class: 'howto', open: !isPhone() }, h('summary', {}, h('b', { text: title }), h('span', { class: 'howto-tip', text: '点开看说明' })), ...content);
   }
-  // Polo 页面上的金额不带千分位（$2877.72）：和其他页面统一成 $2,877.72
-  const groupMoney = (v) => (typeof v === 'string' && /^[$¥]\d{4,}(\.\d+)?$/.test(v) ? v[0] + Number(v.slice(1)).toLocaleString('en-US', { minimumFractionDigits: (v.split('.')[1] || '').length, maximumFractionDigits: (v.split('.')[1] || '').length }) : v);
   function statCard(label, value, iconName, tone = 'blue', sub) {
     const shown = dash(groupMoney(value));
     return h('div', { class: 'card stat' },
@@ -1275,7 +1275,7 @@
       h('div', { class: 'card-body' }, stats, note, picks, plot,
         h('p', { class: 'hint', text: '来自 Polo 的「总池实时并发」，约每 15 秒采样一次。每 5 分钟显示样本平均和最高在飞数；没有读数的时段留空，不算作 0。虚线是前一天、点线是前几天的平均（同一时段的 5 分钟平均）；图上方「显示」那一排可以选显示哪些线（含前几天逐日的线），会记住；右上角可以换成每 30 分钟、每小时一个点，更好对比。' }))),
       h('div', { class: 'card', style: { marginTop: '16px' } }, h('div', { class: 'card-head' }, h('h2', { class: 'card-title' }, icon('log'), '近七天对照')),
-        h('div', { class: 'table-wrap' }, h('table', { class: 'mini-table' }, dhead, days))));
+        h('div', { class: 'table-wrap' }, h('table', { class: 'mini-table flush day-table' }, dhead, days))));
     const num = (v) => v == null ? '—' : v.toLocaleString('zh-CN');
     const hhmm = (s) => new Date((s + 8 * 3600) * 1000).toISOString().slice(11, 16);
     // 对照：前一天（虚线）、前几天同一时段的平均（点线）、前几天逐日（默认不显示，点图例打开）
@@ -1360,9 +1360,11 @@
             : statCard(`近 ${C.cm.length} 天日均`, num(C.spanAvg), 'clock', 'cyan', C.spanAvg !== null ? `${d.day.slice(5)} ${pctOf(d.avg, C.spanAvg) || '持平'}` : '前几天没有采样'));
         note.textContent = !d.count ? `${d.day} 还没有采样记录。` : stale ? '采样暂未更新，显示最后一次真实读数。' : `${d.day} · 最新样本 ${hhmm(d.last_at)}${choice === 'today' ? ' · 每 15 秒自动更新' : ''}`;
         const spanCol = isToday && d.compare.cut < 86400, spanOf = (r) => (r.day === d.day ? d.avg : ((C.cm.find((x) => x.day === r.day) || {}).span_avg ?? null));
-        clear(dhead, h('tr', {}, ['日期', '平均并发', spanCol ? `00:00–${cutTxt} 平均` : null, '采样峰值', '样本数'].filter(Boolean).map((t) => h('th', { text: t }))));
-        clear(days, d.days.length ? d.days.map((r) => h('tr', {}, h('td', {}, h('button', { class: 'btn btn-ghost btn-sm', type: 'button', onclick: () => select(r.day === d.today ? 'today' : r.day) }, r.day)),
-          ...[r.avg, spanCol ? spanOf(r) : undefined, r.peak, r.count].filter((v) => v !== undefined).map((v) => h('td', { text: num(v) })))) : h('tr', {}, h('td', { colspan: spanCol ? '5' : '4', text: '这七天没有采样记录' })));
+        const ph = isPhone();
+        clear(dhead, h('tr', {}, ['日期', '平均并发', spanCol ? (ph ? `到 ${cutTxt} 平均` : `00:00–${cutTxt} 平均`) : null, '采样峰值', '样本数'].filter(Boolean)
+          .map((t, i) => h('th', { class: i ? 'num' : null, title: spanCol && i === 2 ? `每天 00:00–${cutTxt} 的平均并发，和今天同一时段比` : null, text: t }))));
+        clear(days, d.days.length ? d.days.map((r) => h('tr', { class: r.day === d.day ? 'on' : null }, h('td', {}, h('button', { class: 'day-link', type: 'button', title: `看 ${r.day} 的走势`, onclick: () => select(r.day === d.today ? 'today' : r.day) }, ph ? r.day.slice(5) : r.day)),
+          ...[r.avg, spanCol ? spanOf(r) : undefined, r.peak, r.count].filter((v) => v !== undefined).map((v) => h('td', { class: 'num', text: num(v) })))) : h('tr', {}, h('td', { colspan: spanCol ? '5' : '4', text: '这七天没有采样记录' })));
         plot.hidden = !d.count;
         if (d.count) { await loadECharts(); if (!valid()) return; chart = chart || mkChart(plot); chart.resize(); draw(); }
       } catch (e) { if (valid()) note.textContent = '读取失败：' + errText(e) + '。可重新选择日期重试。'; }
@@ -2162,7 +2164,7 @@
         return h('tr', { class: w.state === 'final' ? '' : 'qw-live' },
           h('td', { 'data-label': '窗口' }, h('div', { class: 'mono small', text: span(w) }),
             w.end_src === 'early' ? h('div', { class: 'faint xs', text: 'Polo 提前重置' }) : w.end_src === 'cooldown' ? h('div', { class: 'faint xs', text: '结束时间按冷却原因' }) : null),
-          h('td', { 'data-label': '已跑额度' }, h('b', { class: 'qw-usd' + (w.missing ? ' partial' : ''), title: w.missing ? `有 ${w.missing} 段 10 分钟没查到，数字偏小；窗口结束后会精确统计` : '', text: has(w) ? usd(w.usd) : '统计中' })),
+          h('td', { 'data-label': '已跑额度', class: 'num' }, h('b', { class: 'qw-usd' + (w.missing ? ' partial' : ''), title: w.missing ? `有 ${w.missing} 段 10 分钟没查到，数字偏小；窗口结束后会精确统计` : '', text: has(w) ? usd(w.usd) : '统计中' })),
           h('td', { 'data-label': '请求', class: 'num', text: compact(w.requests) }),
           h('td', { 'data-label': 'Token', class: 'num', text: compact(w.tokens) }),
           h('td', { 'data-label': '其中 Opus / Fable', class: 'num faint', text: has(w) ? `${usd(w.opus)} / ${usd(w.fable)}` : '—' }),
@@ -2447,10 +2449,10 @@
         const ops = admin ? h('div', { class: 'row', style: { gap: '4px', justifyContent: 'flex-end', flexWrap: 'wrap' } }, state,
           h('button', { class: 'btn btn-ghost btn-xs', type: 'button', onclick: () => editCharge(x, reload) }, '改金额'),
           h('button', { class: 'btn btn-ghost btn-xs', type: 'button', onclick: () => waiveCharge(x, reload) }, x.waived ? '恢复' : '免除')) : state;
-        return h('tr', { class: x.waived ? 'faint' : '' }, h('td', { class: 'nowrap', text: x.due_day }),
+        return h('tr', { class: x.waived ? 'faint' : '' }, h('td', { class: 'nowrap' }, h('span', { class: 'd-full', text: x.due_day }), h('span', { class: 'd-short', text: String(x.due_day || '').slice(5) })),
           h('td', {}, h('b', { text: x.name || x.account_key }), x.email ? h('div', { class: 'email mono', text: x.email }) : null,
             admin ? h('div', { class: 'faint xs', text: '记在 ' + uname(x.user_id, x.username) + ' 名下' }) : null),
-          h('td', { text: KIND[x.kind] || x.kind }), h('td', { text: SEAT_CN[x.seat] || '—' }), h('td', { class: 'num' }, amount,x.calc_note ? h('small',{class:'faint',style:{display:'block'},text:x.calc_note}) : null), h('td', {}, ops));
+          h('td', {}, KIND[x.kind] || x.kind, h('div', { class: 'faint xs seat-m', text: SEAT_CN[x.seat] || '' })), h('td', { text: SEAT_CN[x.seat] || '—' }), h('td', { class: 'num' }, amount,x.calc_note ? h('small',{class:'faint',style:{display:'block'},text:x.calc_note}) : null), h('td', {}, ops));
       }))));
   }
   function editCharge(x, reload) {
@@ -2605,7 +2607,9 @@
       lineRecovery(L, ex ? ex.now : null),
     ] : [h('div', { class: 'loading-box small' }, icon('refresh', 'icon icon-sm spin'), h('span', { text: '预估更新中；点“结算”会直接精确查询' }))];
     const up = (st.up_points || [])[0];
-    const chips = [m.prior_day ? h('span',{class:'chip chip-blue',text:'结到昨天'}) : null, unpaid ? h('span', { class: 'chip chip-warn', text: `还有 ${cny(unpaid)} 没付` }) : null,
+    const nDays = settleDays(m).length;
+    const chips = [m.prior_day ? h('span',{class:'chip chip-blue',text:'结到昨天'}) : null,
+      nDays ? h('span', { class: 'chip chip-warn', title: '点“结算”后可以在“结算到”里选只结到某一天，一天一天结', text: `${nDays + 1} 天没结，可分天结算` }) : null, unpaid ? h('span', { class: 'chip chip-warn', text: `还有 ${cny(unpaid)} 没付` }) : null,
       up && m.start !== null && up.end_at >= m.start ? h('span', { class: 'chip chip-blue', title: '点“结算”时可以选只结算到这个上家结算点', text: `上家已结到 ${fmtSec(up.end_at).slice(5, 16)}` }) : null,
       L.status !== 'active' ? h('span', { class: 'chip', text: '已停用' }) : null,
       L.adjust_usd ? h('span', { class: 'chip', text: `调整 ${usd(L.adjust_usd)}` }) : null,
@@ -2623,6 +2627,17 @@
       parts, chips.length ? h('div', { class: 'chips' }, chips) : null, details);
   }
 
+  // 这位成员没结算的时间里，已经整天过完、又不是默认截止那天的日子（北京时间，新的在前）。
+  // 默认截止：隔日结算的是昨天 23:59:59，实时结算的是现在；这些日子可以单独选「只结到这天结束」
+  const bjDayEnd = (d) => Date.parse(d + 'T23:59:59+08:00') / 1000;
+  function settleDays(m) {
+    if (m.start === null || m.start === undefined) return [];
+    const lim = m.prior_day ? bjDayEnd(addDays(bjToday(), -1)) : Math.floor(Date.now() / 1000) - 120;
+    const out = [];
+    for (let d = dayOfTs(m.start); bjDayEnd(d) < lim && out.length < 60; d = addDays(d, 1)) out.push(d);
+    return out.reverse();
+  }
+
   function settlePreview(m, st, done) {
     const who = uname(m.user_id, m.line.username);
     const box = h('div');
@@ -2632,12 +2647,17 @@
     const paidNote = h('input', { class: 'input input-sm', maxlength: '200', placeholder: '付款备注：例如 微信 / 支付宝 / 交易哈希（可选）', hidden: true });
     markPaid.addEventListener('change', () => { paidNote.hidden = !markPaid.checked; });
     // 结算到：现在，或某个上家结算点（上家结完账再给成员结到同一秒）
-    const ups = (st.up_points || []).filter((p) => m.start !== null && p.end_at >= m.start && (!m.prior_day || p.end_at <= m.cutoff)).slice(0, 4);
+    const days = settleDays(m).slice(0, 10), dayEnds = days.map(bjDayEnd);
+    const ups = (st.up_points || []).filter((p) => m.start !== null && p.end_at >= m.start && (!m.prior_day || p.end_at <= m.cutoff) && !dayEnds.includes(p.end_at)).slice(0, 4);
     const untilSeg = h('div', { class: 'seg seg-wrap' });
-    const paintUntil = () => clear(untilSeg, [[null, m.prior_day ? '昨天 23:59:59（北京）' : '现在（前 2 分钟）'], ...ups.map((p) => [p.end_at, `上家结算点 #${p.id}（${fmtSec(p.end_at).slice(5)}）`])]
-      .map(([v, l]) => h('button', { type: 'button', class: until === v ? 'on' : '', onclick: () => { if (until !== v) { until = v; paintUntil(); run(); } } }, l)));
+    const paintUntil = () => clear(untilSeg, [[null, m.prior_day ? `昨天 ${addDays(bjToday(), -1).slice(5)} 23:59:59` : '现在（前 2 分钟）', '默认'],
+      ...days.map((d) => [bjDayEnd(d), `${d.slice(5)} 23:59:59`, `只结到北京时间 ${d} 结束，之后的留到下次`]),
+      ...ups.map((p) => [p.end_at, `上家结算点 #${p.id}（${fmtSec(p.end_at).slice(5)}）`, '和上家结到同一秒'])]
+      .map(([v, l, t]) => h('button', { type: 'button', class: until === v ? 'on' : '', title: t, onclick: () => { if (until !== v) { until = v; paintUntil(); run(); } } }, l)));
     paintUntil();
-    const head = ups.length || m.prior_day ? h('div', { class: 'row wrap until-row' }, h('span', { class: 'label', text: '结算到' }), untilSeg) : null;
+    const head = ups.length || days.length || m.prior_day ? h('div', {},
+      h('div', { class: 'row wrap until-row' }, h('span', { class: 'label', text: '结算到' }), untilSeg),
+      days.length ? h('p', { class: 'hint', style: { margin: '0 0 10px' }, text: `从 ${dayOfTs(m.start).slice(5)} 起有 ${days.length + 1} 天还没结。可以先选最早那天结掉，再点一次结算结下一天；分开结和当天按时结的金额一样。` }) : null) : null;
     modal({ title: `结算 · ${who}`, body: h('div', {}, head, box), wide: true, actions: [{ label: '取消' }, { label: '确认结算', kind: 'btn-primary', onClick: async () => {
       if (!res) return false;
       const p = pay.get();
@@ -2671,7 +2691,7 @@
         const step = (label, val, cls, sub) => h('div', { class: 'calc-row' + (cls ? ' ' + cls : '') }, h('div', {}, h('span', { text: label }), sub ? h('small', { text: sub }) : null), h('b', { text: val }));
         clear(box,
           h('div', { class: 'notice n-info' }, icon('clock'), h('span', {}, '结算截止 ', h('b', { text: fmtSec(res.cutoff) }),
-            res.prior_day && !until ? '（北京时间昨天结束）。包含此前未结的部分，今天的额度和调整不计入本单。' : until ? `（上家结算点，北京时间）。确认后 ${who} 名下每个号的结算点都写到这一秒，之后的额度留到下次。` : `（点击时间前 2 分钟，北京时间）。确认后 ${who} 名下每个号的结算点都写到这一秒，下次从下一秒开始。`)),
+            until && dayEnds.includes(until) ? `（北京时间 ${dayOfTs(until)} 结束）。确认后 ${who} 名下每个号的结算点都写到这一秒，之后的额度${res.prior_day ? '和调整' : ''}留到下次结算。` : res.prior_day && !until ? '（北京时间昨天结束）。包含此前未结的部分，今天的额度和调整不计入本单。' : until ? `（上家结算点，北京时间）。确认后 ${who} 名下每个号的结算点都写到这一秒，之后的额度留到下次。` : `（点击时间前 2 分钟，北京时间）。确认后 ${who} 名下每个号的结算点都写到这一秒，下次从下一秒开始。`)),
           windowsTable(res.items, acctMap(st.accounts)),
           res.unmatched && res.unmatched.length ? h('div', { class: 'notice n-warn', style: { marginTop: '10px' } }, icon('warning'), h('span', { text: `注意：有 ${res.unmatched.length} 个 Polo 账号没对应到邮箱，不计入任何成员。` })) : null,
           L.breakdown ? h('div',{class:'calc'},L.breakdown.map(([label,value],i)=>step(label,value,i===L.breakdown.length-1?'total':''))) : h('div', { class: 'calc' },
@@ -2707,11 +2727,11 @@
     const rows = st.adjustments;
     return h('div', { class: 'card', style: { marginTop: '16px' } },
       h('div', { class: 'card-head' }, h('h3', { class: 'card-title' }, icon('plus'), '调整项', h('span', { class: 'faint xs', style: { fontWeight: 400 }, text: '计入这位成员的下一次结算' })), add),
-      rows.length ? h('div', { class: 'table-wrap' }, h('table', { class: 'table' },
+      rows.length ? h('div', { class: 'table-wrap' }, h('table', { class: 'table responsive' },
         h('thead', {}, h('tr', {}, ['成员', '金额', '原因', '添加', ''].map((t) => h('th', { text: t })))),
-        h('tbody', {}, rows.map((a) => h('tr', {}, h('td', {}, userName2(a.user_id, a.username)), h('td', { class: 'num ' + (a.usd > 0 ? 'text-ok' : 'text-bad'), text: usd(a.usd) }), h('td', { text: a.note }),
-          h('td', { class: 'small faint', text: `${a.created_by || ''} · ${ago(a.created_at)}` }),
-          h('td', {}, h('button', { class: 'btn btn-ghost btn-xs', type: 'button', onclick: async () => {
+        h('tbody', {}, rows.map((a) => h('tr', {}, h('td', { 'data-label': '' }, userName2(a.user_id, a.username)), h('td', { 'data-label': '金额', class: 'num ' + (a.usd > 0 ? 'text-ok' : 'text-bad'), text: usd(a.usd) }), h('td', { 'data-label': '原因', text: a.note }),
+          h('td', { 'data-label': '添加', class: 'small faint', text: `${a.created_by || ''} · ${ago(a.created_at)}` }),
+          h('td', { 'data-label': '' }, h('button', { class: 'btn btn-ghost btn-xs', type: 'button', onclick: async () => {
             if (!(await confirmBox('删除调整项', `删除给 ${uname(a.user_id, a.username)} 的 ${usd(a.usd)}（${a.note}）？`, { danger: true, okText: '删除' }))) return;
             try { await api('POST', '/admin/settle/adjust-delete/' + a.id); reload(); } catch (e) { toast(errText(e), 'bad'); }
           } }, '删除'))))))) : h('div', { class: 'card-body muted small', text: '没有待结算的调整项。停机补偿、纠错等可以在这里添加。' }));
@@ -3052,11 +3072,11 @@
     }
     const dayCard = h('div', { class: 'card', style: { marginBottom: '16px' } },
       h('div', { class: 'card-head' }, h('h3', { class: 'card-title' }, icon('chart'), '每天的结算'), h('span', { class: 'faint xs', text: '按结算单生成的日期' })),
-      Object.keys(byDay).length ? h('div', { class: 'table-wrap' }, h('table', { class: 'table' },
+      Object.keys(byDay).length ? h('div', { class: 'table-wrap' }, h('table', { class: 'table responsive' },
         h('thead', {}, h('tr', {}, ['日期', '次数', '额度', '应付成员', '其中回本·不分成', '我的收入', '未付款'].map((t) => h('th', { text: t })))),
-        h('tbody', {}, Object.entries(byDay).sort((a, b) => b[0].localeCompare(a[0])).map(([d, x]) => h('tr', {}, h('td', { text: d }), h('td', { class: 'num', text: x.n }), h('td', { class: 'num', text: usd(x.usd) }),
-          h('td', { class: 'num', text: cny(x.member) }), h('td', { class: 'num ' + (x.rec ? 'text-warn' : 'faint'), text: x.rec ? cny(x.rec) : '—' }), h('td', { class: 'num text-ok', text: cny(x.admin) }),
-          h('td', { class: 'num ' + (x.unpaid > 0.004 ? 'text-warn' : 'faint'), text: x.unpaid > 0.004 ? cny(x.unpaid) : '已付清' })))))) : h('div', { class: 'card-body muted small', text: '还没有结算记录' }));
+        h('tbody', {}, Object.entries(byDay).sort((a, b) => b[0].localeCompare(a[0])).map(([d, x]) => h('tr', {}, h('td', { 'data-label': '', class: 'cell-title', text: d }), h('td', { 'data-label': '次数', class: 'num', text: x.n }), h('td', { 'data-label': '额度', class: 'num', text: usd(x.usd) }),
+          h('td', { 'data-label': '应付成员', class: 'num', text: cny(x.member) }), h('td', { 'data-label': '其中回本·不分成', class: 'num ' + (x.rec ? 'text-warn' : 'faint'), text: x.rec ? cny(x.rec) : '—' }), h('td', { 'data-label': '我的收入', class: 'num text-ok', text: cny(x.admin) }),
+          h('td', { 'data-label': '未付款', class: 'num ' + (x.unpaid > 0.004 ? 'text-warn' : 'faint'), text: x.unpaid > 0.004 ? cny(x.unpaid) : '已付清' })))))) : h('div', { class: 'card-body muted small', text: '还没有结算记录' }));
     // 列表 + 筛选
     let who = 'all', state = 'all';
     const whoIds = [...new Set(settlements.map((s) => s.user_id).filter((x) => x !== null && x !== undefined))];
@@ -3368,7 +3388,7 @@
   function rpTable(s) {
     return h('section', { class: 'card rp-card' }, h('div', { class: 'card-head' }, h('h3', { class: 'card-title', text: s.title })),
       s.note ? h('div', { class: 'card-body muted small', text: s.note }) : null, (s.rows || []).length ? h('div', { class: 'table-wrap' }, h('table', { class: 'table responsive' },
-        h('thead', {}, h('tr', {}, s.columns.map((t) => h('th', { text: t })))), h('tbody', {}, s.rows.map((row) => h('tr', {}, row.map((v, i) => h('td', { 'data-label': s.columns[i], text: v ?? '—' }))))))) : h('div', { class: 'card-body muted small', text: '暂无记录' }));
+        h('thead', {}, h('tr', {}, s.columns.map((t) => h('th', { text: t })))), h('tbody', {}, s.rows.map((row) => h('tr', {}, row.map((v, i) => h('td', { 'data-label': s.columns[i], text: v == null ? '—' : /^\d{4,}$/.test(String(v)) ? Number(v).toLocaleString('en-US') : v }))))))) : h('div', { class: 'card-body muted small', text: '暂无记录' }));
   }
   function rpChart(s, later) {
     const el = h('div', { class: 'chart' + (s.kind === 'stack' && !s.half ? ' rp-chart-wide' : '') });
@@ -3433,7 +3453,7 @@
   }
   function reportSections(sections, later = []) {
     const one = (s) => {
-      if (s.type === 'kpis') return h('div', { class: 'stats rp-kpis' }, (s.items || []).map((x) => statCard(x.label, x.value, RP_ICON[x.icon] || 'chart', x.tone || 'blue', x.sub)));
+      if (s.type === 'kpis') return h('div', { class: 'stats rp-kpis' + ((s.items || []).length === 5 ? ' n5' : '') }, (s.items || []).map((x) => statCard(x.label, x.value, RP_ICON[x.icon] || 'chart', x.tone || 'blue', x.sub)));
       if (s.type === 'tiles') return rpTiles(s);
       if (s.type === 'chart') return rpChart(s, later);
       if (s.type === 'steps') return rpSteps(s);
@@ -3795,6 +3815,7 @@
       function drawTable() {
         const sorted = accs.slice().sort((a, b) => { const x = val(a, sortKey), y = val(b, sortKey); return (typeof x === 'string' ? x.localeCompare(y) : x - y) * sortDir; });
         const rows = acctAll ? sorted : sorted.slice(0, 8);
+        const topUsd = Math.max(0, ...accs.map((x) => x.usd || 0));
         acctMoreRow.hidden = rows.length === sorted.length;
         acctMore.textContent = `显示全部 ${sorted.length} 个号`;
         clear(tableWrap, h('table', { class: 'table responsive acct-table' },
@@ -3803,7 +3824,7 @@
             h('td', { 'data-label': '' }, acctLabel(a.key, info, a.name), inf.seat ? h('span', { class: 'chip', style: { marginTop: '3px' }, text: SEAT_CN[inf.seat] + '席位' }) : null),
             h('td', { 'data-label': '归属', class: 'small nowrap' }, [...a.owners].map(ownName).join('、')),
             h('td', { 'data-label': '额度', class: 'num money-strong', title: usd4(a.usd) }, usd(a.usd)),
-            h('td', { 'data-label': '占比', class: 'num' }, h('div', { class: 'pct-cell' }, h('span', { text: T.usd ? ((a.usd / T.usd) * 100).toFixed(1) + '%' : '—' }), (() => { const i = h('i'); i.style.width = (T.usd ? (a.usd / T.usd) * 100 : 0) + '%'; return h('div', { class: 'pct-bar' }, i); })())),
+            h('td', { 'data-label': '占比', class: 'num' }, h('div', { class: 'pct-cell' }, h('span', { text: T.usd ? ((a.usd / T.usd) * 100).toFixed(1) + '%' : '—' }), (() => { const i = h('i'); i.style.width = (topUsd ? (a.usd / topUsd) * 100 : 0) + '%'; return h('div', { class: 'pct-bar' }, i); })())),
             h('td', { 'data-label': '产出', class: 'num' }, cny(a.usd * rate)),
             h('td', { 'data-label': '我的利润（估）', class: 'num text-ok' }, cny(a.my)),
             h('td', { 'data-label': '成员应得（估）', class: 'num ' + (a.member ? '' : 'faint') }, a.member ? cny(a.member) : '—'),
