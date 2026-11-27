@@ -4432,6 +4432,8 @@
   // 发布了新版：每 5 分钟（切回这个标签页时马上）看一眼 index.html 里的版本号，变了就换新版：
   // 用户切换页面时直接换；否则等没在操作时自动刷新。10 分钟内最多自动刷新一次（防止缓存没过期时反复刷），挡住了就到点再试
   if (APP_V) {
+    // 本页加载的样式版本（index.html 里 style.css?v=NN）：只改样式发布时也要换新版
+    const CSS_V = ((((document.querySelector('link[href*="style.css"]') || {}).href) || '').match(/[?&]v=(\d+)/) || [])[1] || null;
     let want = null, timer = null, checkedAt = 0;
     const reloadNow = (force) => {
       const last = Number(sessionStorage.getItem('polo_vreload') || 0), wait = 600000 - (Date.now() - last);
@@ -4447,8 +4449,8 @@
       checkedAt = Date.now();
       try {
         const html = await (await fetch(location.pathname + '?vc=' + Date.now(), { cache: 'no-store' })).text();
-        const v = (html.match(/app\.js\?v=(\d+)/) || [])[1];
-        if (v && Number(v) > Number(APP_V)) { want = v; reloadWhenIdle(); }
+        const v = (html.match(/app\.js\?v=(\d+)/) || [])[1], cv = (html.match(/style\.css\?v=(\d+)/) || [])[1];
+        if ((v && Number(v) > Number(APP_V)) || (cv && CSS_V && Number(cv) > Number(CSS_V))) { want = v || cv; reloadWhenIdle(); }
       } catch { /* 下次再看 */ }
     };
     setInterval(check, 300000);
