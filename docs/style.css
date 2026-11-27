@@ -380,7 +380,7 @@ button.seat:hover { filter: brightness(1.08); box-shadow: 0 0 0 2px var(--primar
 .ip-pill { cursor: copy; font-size: 11.5px; }
 .ip-pill .mono { font-weight: 650; }
 /* 请求 */
-.req { display: grid; grid-template-columns: auto auto; gap: 5px 10px; align-items: center; font-size: 12.5px; white-space: nowrap; }
+.req { display: grid; grid-template-columns: max-content max-content; justify-content: start; gap: 5px 10px; align-items: center; font-size: 12.5px; white-space: nowrap; }
 .req-k { color: var(--muted); font-size: 12px; }
 .req .pill + .pill { margin-left: 4px; }
 /* 额度 */
@@ -1190,3 +1190,9 @@ tr:hover .nick-btn { opacity: 1; }
 .own-chip .own-conc { font-size: 11.5px; font-weight: 600; color: var(--faint); font-variant-numeric: tabular-nums; padding-left: 8px; border-left: 1px solid var(--border-strong); white-space: nowrap; }
 .own-chip .own-conc.live { color: var(--primary-text); font-weight: 700; }
 .own-chip.on .own-conc { color: rgba(255, 255, 255, .92); border-left-color: rgba(255, 255, 255, .35); }
+/* 看板账号表（电脑）：表头文字和下面内容左边对齐（原来表头 14px、内容 12px，第一列 14 对 18）；
+   列间距左右各 10px，1440 宽的屏幕上整张表放得下（原来多 6px，最右一列被裁掉一点） */
+@media (min-width: 761px) {
+  .table.accounts th, .table.accounts td { padding-left: 10px; padding-right: 10px; }
+  .table.accounts th:first-child, .table.accounts td:first-child { padding-left: 18px; }
+}
