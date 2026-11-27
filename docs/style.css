@@ -1021,7 +1021,7 @@ tr:hover .nick-btn { opacity: 1; }
 /* ---- 看板：按归属筛选（管理员） ---- */
 .own-head { justify-content: flex-start; padding-top: 10px; padding-bottom: 10px; }
 .own-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-height: 30px; }
-.own-lab { font-size: 12px; font-weight: 650; color: var(--muted); margin-right: 4px; }
+.own-lab { font-size: 12px; font-weight: 650; color: var(--muted); margin-right: 4px; white-space: nowrap; flex-shrink: 0; }
 .own-chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 6px 4px 12px; border-radius: 999px; border: 1px solid var(--border-strong); background: var(--surface); color: var(--text-2); font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; line-height: 18px; transition: background .15s, border-color .15s, color .15s, box-shadow .15s; }
 .own-chip i { font-style: normal; font-size: 11px; font-weight: 700; min-width: 18px; text-align: center; padding: 0 5px; border-radius: 999px; background: var(--surface-2); color: var(--muted); font-variant-numeric: tabular-nums; }
 .own-chip:hover:not(:disabled) { border-color: var(--primary-2); color: var(--primary-text); }
@@ -1185,3 +1185,8 @@ tr:hover .nick-btn { opacity: 1; }
 /* 统计卡片数字下面的副数字（例如上家收益折合人民币） */
 .stat-alt { font-size: 14px; font-weight: 650; color: var(--text-2); margin-top: 1px; font-variant-numeric: tabular-nums; cursor: help; }
 .yd-amt span.yd-cny { font-weight: 650; color: var(--text-2); cursor: help; }
+/* 归属按钮上的并发合计：数量后面用一条竖线隔开 */
+.own-chip.has-conc { padding-right: 12px; }
+.own-chip .own-conc { font-size: 11.5px; font-weight: 600; color: var(--faint); font-variant-numeric: tabular-nums; padding-left: 8px; border-left: 1px solid var(--border-strong); white-space: nowrap; }
+.own-chip .own-conc.live { color: var(--primary-text); font-weight: 700; }
+.own-chip.on .own-conc { color: rgba(255, 255, 255, .92); border-left-color: rgba(255, 255, 255, .35); }

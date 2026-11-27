@@ -1431,8 +1431,17 @@
     const ownerBar = admin ? h('div', { class: 'own-bar', role: 'group', 'aria-label': '按归属筛选（可多选）' }) : null;
     function paintOwners(rows) {
       if (!ownerBar) return null;
-      const cnt = {}, names = {};
-      for (const r of rows) { const k = ownKeyOf(r); cnt[k] = (cnt[k] || 0) + 1; if (r.owner) names[k] = r.owner.name; }
+      const cnt = {}, names = {}, conc = {};
+      let concAll = 0;
+      for (const r of rows) {
+        const k = ownKeyOf(r), n = liveNums(r).conc || 0;
+        cnt[k] = (cnt[k] || 0) + 1; conc[k] = (conc[k] || 0) + n; concAll += n;
+        if (r.owner) names[k] = r.owner.name;
+      }
+      // 名下所有号此刻的并发合计（每 15 秒随实时数字更新）
+      const concEl = (n) => h('span', { class: 'own-conc' + (n > 0 ? ' live' : ''), text: `并发 ${n}` });
+      const concTip = (n, c) => `
+此刻并发合计 ${n}（${c} 个号，每 15 秒更新）`;
       const opts = [['me', '我'], ...Object.keys(names).sort((a, b) => String(names[a]).localeCompare(String(names[b]), 'zh-CN')).map((k) => [k, names[k]])];
       const live = opts.filter(([k]) => cnt[k]).map(([k]) => k);
       const sel = ownSel ? ownSel.filter((k) => cnt[k]) : [];
@@ -1446,9 +1455,10 @@
       };
       const on = (k) => !all && sel.includes(k);
       clear(ownerBar, h('span', { class: 'own-lab', text: '归属' }),
-        h('button', { type: 'button', class: 'own-chip' + (all ? ' on' : ''), 'aria-pressed': String(all), title: '显示全部账号', onclick: () => { ownSel = null; save(); drawTable(); } }, '全选', h('i', { text: String(rows.length) })),
-        opts.map(([k, l]) => h('button', { type: 'button', class: 'own-chip' + (k === 'me' ? ' own-me' : '') + (on(k) ? ' on' : ''), 'aria-pressed': String(on(k)), disabled: !cnt[k],
-          title: all ? `只看${k === 'me' ? '我的号' : ' ' + l + ' 的号'}` : on(k) ? '再点一下取消' : '加选', onclick: () => pick(k) }, l, h('i', { text: String(cnt[k] || 0) }))));
+        h('button', { type: 'button', class: 'own-chip has-conc' + (all ? ' on' : ''), 'aria-pressed': String(all), title: '显示全部账号' + concTip(concAll, rows.length), onclick: () => { ownSel = null; save(); drawTable(); } }, '全选', h('i', { text: String(rows.length) }), concEl(concAll)),
+        opts.map(([k, l]) => h('button', { type: 'button', class: 'own-chip' + (cnt[k] ? ' has-conc' : '') + (k === 'me' ? ' own-me' : '') + (on(k) ? ' on' : ''), 'aria-pressed': String(on(k)), disabled: !cnt[k],
+          title: (all ? `只看${k === 'me' ? '我的号' : ' ' + l + ' 的号'}` : on(k) ? '再点一下取消' : '加选') + (cnt[k] ? concTip(conc[k] || 0, cnt[k]) : ''), onclick: () => pick(k) },
+          l, h('i', { text: String(cnt[k] || 0) }), cnt[k] ? concEl(conc[k] || 0) : null)));
       return all ? null : new Set(sel);
     }
     const updated = h('span', { class: 'updated' });
